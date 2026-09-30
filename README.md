@@ -27,3 +27,6 @@ Grow in stages: hashtable → log → compaction → cache. One stage per commit
 ## License
 
 MIT, see [LICENSE](LICENSE).
+
+---
+maintained · verified 2026-09-30
