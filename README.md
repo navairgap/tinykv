@@ -30,3 +30,9 @@ MIT, see [LICENSE](LICENSE).
 
 ---
 maintained · verified 2026-09-30
+
+## Design decisions
+
+- LSM-tree with leveled compaction — writes never block reads.
+- Checksums on every block; a torn tail is truncated on open, not fatal.
+- No network layer by design. Embed it, don't expose it.
