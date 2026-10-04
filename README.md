@@ -36,3 +36,15 @@ maintained · verified 2026-09-30
 - LSM-tree with leveled compaction — writes never block reads.
 - Checksums on every block; a torn tail is truncated on open, not fatal.
 - No network layer by design. Embed it, don't expose it.
+
+## Embedding
+
+```rust
+use tinykv::Db;
+
+let db = Db::open("./data")?;
+db.insert(b"greeting", b"hello")?;
+assert_eq!(db.get(b"greeting")?, Some(b"hello".to_vec()));
+```
+
+That's the whole API surface for 90% of uses. Migrations and TTL live behind feature flags.
