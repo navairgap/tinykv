@@ -48,3 +48,9 @@ assert_eq!(db.get(b"greeting")?, Some(b"hello".to_vec()));
 ```
 
 That's the whole API surface for 90% of uses. Migrations and TTL live behind feature flags.
+
+## Glossary
+
+- **lsm-tree** — writes go to memory, sorted runs flush to disk
+- **wal** — write-ahead log; the crash-recovery backbone
+- **compaction** — merging sorted runs to reclaim space and drop shadowed keys
