@@ -60,3 +60,7 @@ That's the whole API surface for 90% of uses. Migrations and TTL live behind fea
 - **lsm-tree** — writes go to memory, sorted runs flush to disk
 - **wal** — write-ahead log; the crash-recovery backbone
 - **compaction** — merging sorted runs to reclaim space and drop shadowed keys
+
+## Crash recovery
+
+open → replay wal → verify block checksums → truncate torn tail → build index. recovery is linear in wal size, not data size — rotate the wal often.
