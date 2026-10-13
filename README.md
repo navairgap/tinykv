@@ -64,3 +64,7 @@ That's the whole API surface for 90% of uses. Migrations and TTL live behind fea
 ## Crash recovery
 
 open → replay wal → verify block checksums → truncate torn tail → build index. recovery is linear in wal size, not data size — rotate the wal often.
+
+## Internals
+
+in-memory index is a skiplist — ordered scans without rebalancing pain. levels on disk are sorted runs merged by size-tiered compaction; reads check newest to oldest.
