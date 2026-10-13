@@ -68,3 +68,7 @@ open → replay wal → verify block checksums → truncate torn tail → build 
 ## Internals
 
 in-memory index is a skiplist — ordered scans without rebalancing pain. levels on disk are sorted runs merged by size-tiered compaction; reads check newest to oldest.
+
+## Compatibility
+
+the on-disk format is versioned in the manifest; opening an older version refuses cleanly instead of guessing. format stability is promised from v1.0 — before that, `tinykv migrate` exists.
