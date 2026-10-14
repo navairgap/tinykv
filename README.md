@@ -72,3 +72,7 @@ in-memory index is a skiplist — ordered scans without rebalancing pain. levels
 ## Compatibility
 
 the on-disk format is versioned in the manifest; opening an older version refuses cleanly instead of guessing. format stability is promised from v1.0 — before that, `tinykv migrate` exists.
+
+## Acknowledgements
+
+bit.cask, leveldb, and the wisckey paper are the lineage: append-only writes, sorted runs, key-value separation. tinykv is what falls out of reading those three and refusing to add a fourth idea.
