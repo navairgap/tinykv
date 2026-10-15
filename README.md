@@ -76,3 +76,7 @@ the on-disk format is versioned in the manifest; opening an older version refuse
 ## Acknowledgements
 
 bit.cask, leveldb, and the wisckey paper are the lineage: append-only writes, sorted runs, key-value separation. tinykv is what falls out of reading those three and refusing to add a fourth idea.
+
+## Contributing
+
+read bitcask first, then the leveldb compaction notes. small PRs that move one boundary each — the merge policy rejects cleverness it can't review in an afternoon.
