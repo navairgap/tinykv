@@ -80,3 +80,7 @@ bit.cask, leveldb, and the wisckey paper are the lineage: append-only writes, so
 ## Contributing
 
 read bitcask first, then the leveldb compaction notes. small PRs that move one boundary each — the merge policy rejects cleverness it can't review in an afternoon.
+
+## Support
+
+issues welcome from people who have read the three papers in the acknowledgements. questions from people who haven't get the reading list first — it's shorter than it sounds.
