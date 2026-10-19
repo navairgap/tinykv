@@ -1,86 +1,42 @@
 # tinykv
 
-A small key-value store in C with an LRU cache
+A planned embedded key-value store written in C.
 
-> 🚧 **Status: planning** — architecture and README first, code next.
+> **Status: design stage.** This repository currently contains documentation only; there is no database implementation or stable on-disk format yet.
 
-## Why
+## Goal
 
-You don't understand databases until you've written one. tinykv is a single-file-ish C project: append-only log, in-memory index, compaction, and an LRU cache — then benchmarked against reality.
+Explore the fundamentals of a small local key-value store: a write-ahead log, an in-memory index, crash recovery, and eventually compaction.
 
-## Planned features
+## Proposed first version
 
-- get/set/delete with an append-only log for durability
-- In-memory hash index with CRC-checked entries
-- Log compaction (merging old versions)
-- LRU cache layer in front of the log
-- A tiny benchmark suite and a REPL client
+- put, get, and delete operations for byte strings.
+- Append-only persistence with a documented record format.
+- Recovery that detects an incomplete final record.
+- A small CLI or REPL for manual testing.
+- No network server; callers should embed the library rather than expose it directly.
 
-## Stack
+## Correctness and data safety
 
-`c` `make` `posix-threads`
+- Define durability guarantees before implementation (including whether put calls fsync).
+- Validate record lengths before allocating memory.
+- Detect corrupt records and report errors rather than silently accepting data.
+- Keep file-format versioning explicit.
+- Test truncated writes, corrupted checksums, duplicate keys, deletion, and restart recovery.
+- Do not claim transactional semantics or crash safety until those tests exist.
 
-## Notes
+## Planned milestones
 
-Grow in stages: hashtable → log → compaction → cache. One stage per commit.
+- [ ] Specify the on-disk record format.
+- [ ] Implement the append-only log and recovery parser.
+- [ ] Add an in-memory index and deterministic unit tests.
+- [ ] Add compaction only after recovery behavior is stable.
+- [ ] Benchmark using reproducible workloads.
+
+## Non-goals for the first version
+
+Networking, replication, distributed consistency, and a production-grade LSM tree are out of scope until the single-node storage path is correct.
 
 ## License
 
-MIT, see [LICENSE](LICENSE).
-
----
-maintained · verified 2026-09-30
-
-## Design decisions
-
-- LSM-tree with leveled compaction — writes never block reads.
-- Checksums on every block; a torn tail is truncated on open, not fatal.
-- No network layer by design. Embed it, don't expose it.
-
-## Embedding
-
-```rust
-use tinykv::Db;
-
-let db = Db::open("./data")?;
-db.insert(b"greeting", b"hello")?;
-assert_eq!(db.get(b"greeting")?, Some(b"hello".to_vec()));
-```
-
-That's the whole API surface for 90% of uses. Migrations and TTL live behind feature flags.
-
-## Glossary
-
-- **lsm-tree** — writes go to memory, sorted runs flush to disk
-- **wal** — write-ahead log; the crash-recovery backbone
-- **compaction** — merging sorted runs to reclaim space and drop shadowed keys
-
-## Glossary
-
-- **lsm-tree** — writes go to memory, sorted runs flush to disk
-- **wal** — write-ahead log; the crash-recovery backbone
-- **compaction** — merging sorted runs to reclaim space and drop shadowed keys
-
-## Crash recovery
-
-open → replay wal → verify block checksums → truncate torn tail → build index. recovery is linear in wal size, not data size — rotate the wal often.
-
-## Internals
-
-in-memory index is a skiplist — ordered scans without rebalancing pain. levels on disk are sorted runs merged by size-tiered compaction; reads check newest to oldest.
-
-## Compatibility
-
-the on-disk format is versioned in the manifest; opening an older version refuses cleanly instead of guessing. format stability is promised from v1.0 — before that, `tinykv migrate` exists.
-
-## Acknowledgements
-
-bit.cask, leveldb, and the wisckey paper are the lineage: append-only writes, sorted runs, key-value separation. tinykv is what falls out of reading those three and refusing to add a fourth idea.
-
-## Contributing
-
-read bitcask first, then the leveldb compaction notes. small PRs that move one boundary each — the merge policy rejects cleverness it can't review in an afternoon.
-
-## Support
-
-issues welcome from people who have read the three papers in the acknowledgements. questions from people who haven't get the reading list first — it's shorter than it sounds.
+MIT. See [LICENSE](LICENSE).
