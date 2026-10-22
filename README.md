@@ -40,3 +40,8 @@ Networking, replication, distributed consistency, and a production-grade LSM tre
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+
+## Storage safety
+
+Document record lengths, byte order, checksum coverage, and durability guarantees before stabilizing the file format. Validate lengths before allocation and distinguish a truncated final record from corruption in the middle of the log. Test recovery using temporary files.
