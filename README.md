@@ -45,3 +45,8 @@ MIT. See [LICENSE](LICENSE).
 ## Storage safety
 
 Document record lengths, byte order, checksum coverage, and durability guarantees before stabilizing the file format. Validate lengths before allocation and distinguish a truncated final record from corruption in the middle of the log. Test recovery using temporary files.
+
+
+## Maintenance and verification notes
+
+Add storage review notes covering record lengths, byte order, corruption versus truncated tail behavior, explicit repair mode, and recovery tests using temporary files.
