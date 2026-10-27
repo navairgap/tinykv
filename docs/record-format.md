@@ -16,6 +16,10 @@ All integers are unsigned big-endian.
 
 The header is followed by exactly `key_length` bytes and `value_length` bytes. Keys and values are opaque byte strings; the storage layer must not assume UTF-8.
 
+## Checksum interoperability
+
+To keep implementations interoperable, define the checksum as CRC-32/ISO-HDLC (IEEE CRC-32): reflected polynomial `0xEDB88320`, initial value `0xFFFFFFFF`, final XOR `0xFFFFFFFF`. Encode the resulting 32-bit checksum as unsigned big-endian, like the other header integers. The checksum input is the exact concatenation of record type, key length, value length, key bytes, and value bytes; exclude magic and the checksum field itself. Include a fixed golden byte fixture so another implementation can reproduce the same value.
+
 ## Validation and recovery
 
 - Reject unknown magic, unsupported record types, impossible lengths, and checksums that do not match.
