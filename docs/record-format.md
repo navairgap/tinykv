@@ -28,6 +28,10 @@ To keep implementations interoperable, define the checksum as CRC-32/ISO-HDLC (I
 - Delete records have an empty value and must still include the key.
 - Never claim durability until write, flush, and fsync behavior is implemented and documented.
 
+## Replay and crash recovery guarantees
+
+Recovery should be deterministic: replaying the same validated record sequence twice must produce the same final key/value state. Do not apply a record to the in-memory index until its complete header, payload, and checksum have been validated. If a write is interrupted, distinguish a truncated tail from an invalid record in the middle. If repair mode truncates a tail, make it an explicit operation and preserve the original file or a recoverable copy before modifying it.
+
 ## Versioning
 
 Any incompatible change requires a new magic/version and explicit migration behavior. Keep golden byte fixtures for each supported version.
