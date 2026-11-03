@@ -1,52 +1,33 @@
 # tinykv
 
-A planned embedded key-value store written in C.
+A small key-value store written in C.
 
-> **Status: design stage.** This repository currently contains documentation only; there is no database implementation or stable on-disk format yet.
+> **Current state: record-codec prototype.** The first append-log record codec is implemented with bounded decoding and focused unit tests. The database, index, WAL replay loop, durability policy, and stable on-disk compatibility guarantees are not implemented yet.
 
-## Goal
+## Record codec
 
-Explore the fundamentals of a small local key-value store: a write-ahead log, an in-memory index, crash recovery, and eventually compaction.
+The prototype follows the draft v1 layout in [docs/record-format.md](docs/record-format.md): TKV1 magic, one-byte put/delete type, big-endian key/value lengths, CRC-32/ISO-HDLC checksum, then opaque key and value bytes. The decoder enforces configured size limits before exposing payload pointers and returns a view into the caller-owned input buffer.
 
-## Proposed first version
+Build and run the focused codec tests with a C11 compiler:
 
-- put, get, and delete operations for byte strings.
-- Append-only persistence with a documented record format.
-- Recovery that detects an incomplete final record.
-- A small CLI or REPL for manual testing.
-- No network server; callers should embed the library rather than expose it directly.
+    cc -std=c11 -Wall -Wextra -Werror -Iinclude src/record_codec.c tests/test_record_codec.c -o /tmp/tinykv-record-tests
+    /tmp/tinykv-record-tests
 
-## Correctness and data safety
+## Remaining scope
 
-- Define durability guarantees before implementation (including whether put calls fsync).
-- Validate record lengths before allocating memory.
-- Detect corrupt records and report errors rather than silently accepting data.
-- Keep file-format versioning explicit.
-- Test truncated writes, corrupted checksums, duplicate keys, deletion, and restart recovery.
-- Do not claim transactional semantics or crash safety until those tests exist.
+- [ ] Define write, flush, and fsync durability guarantees.
+- [ ] Implement append-only log I/O and recovery.
+- [ ] Add the in-memory key index.
+- [ ] Distinguish a truncated tail from corruption in the middle of a log.
+- [ ] Add explicit, recoverable tail-repair behavior.
+- [ ] Add compaction only after replay and recovery are stable.
 
-## Planned milestones
+The codec is a prototype, not a database API or a stable storage format. Do not use it as a production persistence layer.
 
-- [ ] Specify the on-disk record format.
-- [ ] Implement the append-only log and recovery parser.
-- [ ] Add an in-memory index and deterministic unit tests.
-- [ ] Add compaction only after recovery behavior is stable.
-- [ ] Benchmark using reproducible workloads.
+## Non-goals
 
-## Non-goals for the first version
-
-Networking, replication, distributed consistency, and a production-grade LSM tree are out of scope until the single-node storage path is correct.
+Networking, replication, distributed consistency, and a production-grade LSM tree remain out of scope for the first version.
 
 ## License
 
 MIT. See [LICENSE](LICENSE).
-
-
-## Storage safety
-
-Document record lengths, byte order, checksum coverage, and durability guarantees before stabilizing the file format. Validate lengths before allocation and distinguish a truncated final record from corruption in the middle of the log. Test recovery using temporary files.
-
-
-## Maintenance and verification notes
-
-Add storage review notes covering record lengths, byte order, corruption versus truncated tail behavior, explicit repair mode, and recovery tests using temporary files.
