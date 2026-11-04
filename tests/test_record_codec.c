@@ -54,6 +54,21 @@ static void test_rejects_truncation_and_checksum_corruption(void)
         &decoded, &consumed) == TINYKV_RECORD_BAD_CHECKSUM);
     free(encoded);
 }
+static void test_null_input_clears_decode_outputs(void)
+{
+    tinykv_record_view decoded = {
+        TINYKV_RECORD_DELETE, (const uint8_t *)"stale", 5,
+        (const uint8_t *)"value", 5
+    };
+    size_t consumed = 123;
+    assert(tinykv_record_decode(NULL, 0, 64, 64, &decoded, &consumed) ==
+           TINYKV_RECORD_INVALID_ARGUMENT);
+    assert(consumed == 0);
+    assert(decoded.type == 0);
+    assert(decoded.key == NULL && decoded.key_length == 0);
+    assert(decoded.value == NULL && decoded.value_length == 0);
+}
+
 static void test_enforces_limits_before_payload_read(void)
 {
     uint8_t header[TINYKV_RECORD_HEADER_SIZE] = {
@@ -70,6 +85,7 @@ int main(void)
     test_put_round_trip();
     test_delete_round_trip();
     test_rejects_truncation_and_checksum_corruption();
+    test_null_input_clears_decode_outputs();
     test_enforces_limits_before_payload_read();
     puts("tinykv record codec: all tests passed");
     return 0;
