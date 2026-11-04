@@ -112,10 +112,12 @@ tinykv_record_status tinykv_record_decode(
     uint32_t key_length, value_length, expected_crc, actual_crc;
     size_t total_length;
 
-    if (out == NULL || consumed == NULL || bytes == NULL)
+    if (out == NULL || consumed == NULL)
         return TINYKV_RECORD_INVALID_ARGUMENT;
     memset(out, 0, sizeof(*out));
     *consumed = 0;
+    if (bytes == NULL)
+        return TINYKV_RECORD_INVALID_ARGUMENT;
     if (length < TINYKV_RECORD_HEADER_SIZE) return TINYKV_RECORD_TRUNCATED;
     if (memcmp(bytes, RECORD_MAGIC, sizeof(RECORD_MAGIC)) != 0)
         return TINYKV_RECORD_INVALID_FORMAT;
