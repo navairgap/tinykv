@@ -1,0 +1,16 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  codec-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile with strict warnings
+        run: cc -std=c11 -Wall -Wextra -Werror -Iinclude src/record_codec.c tests/test_record_codec.c -o /tmp/tinykv-record-tests
+      - name: Run record codec tests
+        run: /tmp/tinykv-record-tests
