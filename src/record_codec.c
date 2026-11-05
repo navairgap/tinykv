@@ -33,6 +33,12 @@ static uint32_t crc32_update(uint32_t crc, const uint8_t *bytes, size_t length)
     return crc;
 }
 
+static int record_size_overflows(size_t key_length, size_t value_length)
+{
+    return key_length > SIZE_MAX - TINYKV_RECORD_HEADER_SIZE ||
+           value_length > SIZE_MAX - TINYKV_RECORD_HEADER_SIZE - key_length;
+}
+
 uint32_t tinykv_crc32_iso_hdlc(const uint8_t *bytes, size_t length)
 {
     uint32_t crc = 0xFFFFFFFFu;
@@ -78,8 +84,7 @@ tinykv_record_status tinykv_record_encode(
                              max_key_length, max_value_length);
     if (status != TINYKV_RECORD_OK) return status;
 
-    if (key_length > SIZE_MAX - TINYKV_RECORD_HEADER_SIZE ||
-        value_length > SIZE_MAX - TINYKV_RECORD_HEADER_SIZE - key_length)
+    if (record_size_overflows(key_length, value_length))
         return TINYKV_RECORD_LIMIT_EXCEEDED;
     total_length = TINYKV_RECORD_HEADER_SIZE + key_length + value_length;
     record = (uint8_t *)malloc(total_length);
@@ -130,8 +135,7 @@ tinykv_record_status tinykv_record_decode(
         return TINYKV_RECORD_LIMIT_EXCEEDED;
     if (bytes[4] == TINYKV_RECORD_DELETE && value_length != 0)
         return TINYKV_RECORD_INVALID_FORMAT;
-    if ((size_t)key_length > SIZE_MAX - TINYKV_RECORD_HEADER_SIZE ||
-        (size_t)value_length > SIZE_MAX - TINYKV_RECORD_HEADER_SIZE - (size_t)key_length)
+    if (record_size_overflows((size_t)key_length, (size_t)value_length))
         return TINYKV_RECORD_LIMIT_EXCEEDED;
 
     total_length = TINYKV_RECORD_HEADER_SIZE + (size_t)key_length + (size_t)value_length;
