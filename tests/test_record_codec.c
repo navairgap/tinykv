@@ -79,6 +79,24 @@ static void test_enforces_limits_before_payload_read(void)
     assert(tinykv_record_decode(header, sizeof(header), 64, 64,
         &decoded, &consumed) == TINYKV_RECORD_LIMIT_EXCEEDED);
 }
+
+static void test_rejects_invalid_delete_payload_and_record_type(void)
+{
+    static const uint8_t key[] = "k", value[] = "v";
+    uint8_t *encoded = (uint8_t *)1;
+    size_t length = 99;
+
+    assert(tinykv_record_encode(TINYKV_RECORD_DELETE, key, 1, value, 1,
+        64, 64, &encoded, &length) == TINYKV_RECORD_INVALID_FORMAT);
+    assert(encoded == NULL && length == 0);
+
+    encoded = (uint8_t *)1;
+    length = 99;
+    assert(tinykv_record_encode(255, key, 1, NULL, 0,
+        64, 64, &encoded, &length) == TINYKV_RECORD_INVALID_TYPE);
+    assert(encoded == NULL && length == 0);
+}
+
 int main(void)
 {
     test_crc_vector();
