@@ -6,10 +6,10 @@ CFLAGS ?= -std=c11 -O2 -Wall -Wextra -Werror -pedantic -D_POSIX_C_SOURCE=200809L
 CPPFLAGS ?= -Iinclude
 BUILD := build
 
-LIB_SRCS := src/record_codec.c
+LIB_SRCS := src/record_codec.c src/tkv_index.c
 LIB_OBJS := $(patsubst src/%.c,$(BUILD)/obj/%.o,$(LIB_SRCS))
 
-TESTS := test_record_codec
+TESTS := test_record_codec test_index
 TEST_BINS := $(patsubst %,$(BUILD)/%,$(TESTS))
 
 .PHONY: all test clean
@@ -26,7 +26,7 @@ $(BUILD)/libtinykv.a: $(LIB_OBJS) | $(BUILD)
 	$(AR) rcs $@ $^
 
 $(BUILD)/%: tests/%.c $(BUILD)/libtinykv.a | $(BUILD)
-	$(CC) $(CFLAGS) $(CPPFLAGS) $< $(BUILD)/libtinykv.a -o $@
+	$(CC) $(CFLAGS) $(CPPFLAGS) -Isrc $< $(BUILD)/libtinykv.a -o $@
 
 test: $(TEST_BINS)
 	@for t in $(TEST_BINS); do echo "== $$t"; ./$$t || exit 1; done
