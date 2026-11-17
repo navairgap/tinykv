@@ -105,6 +105,7 @@ int main(void)
     test_rejects_truncation_and_checksum_corruption();
     test_null_input_clears_decode_outputs();
     test_enforces_limits_before_payload_read();
+    test_rejects_invalid_delete_payload_and_record_type();
     puts("tinykv record codec: all tests passed");
     return 0;
 }
