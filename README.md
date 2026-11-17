@@ -145,6 +145,38 @@ valgrind, a 60-second libFuzzer run of the codec, and an end-to-end CLI
 smoke test. The fuzz harness also runs standalone (`make fuzz`) with
 exhaustive single-byte corruption coverage.
 
+## FAQ
+
+**How big can my database be?**
+The index holds one entry per live key, so plan for roughly 40–80 bytes
+of RAM per key plus the value length you store. The file itself can grow
+into the gigabytes; recovery time scales with the log, so compact
+regularly on large databases.
+
+**When should I compact?**
+`tinykv stats` shows `dead_bytes` — bytes held by superseded records,
+tombstones, and torn tails. A rough rule: compact when dead bytes exceed
+25–50% of the file, or before taking a backup (compaction makes the copy
+smaller and replay faster). Compaction is atomic and safe to run while
+your process holds the handle.
+
+**Can two processes use it?**
+One process may hold the read-write handle (enforced by an exclusive
+flock — a second writer gets `TINYKV_ERR_LOCKED`). Any number of
+read-only handles may be open at the same time; each sees the log as of
+its open.
+
+**What happens if my process dies mid-write?**
+At worst a torn tail: the last, partially-written record. Open reports
+it in stats (`discarded_bytes`), the next write reclaims it, and nothing
+else is affected. Use `tinykv verify` to check, `tinykv repair --yes` to
+reclaim it explicitly.
+
+**Does tinykv give me durability by default?**
+Yes — the default `TINYKV_SYNC_EVERY_WRITE` fsyncs after every write.
+Bulk loads should switch to `TINYKV_SYNC_ON_CLOSE` or `SYNC_NONE` (the
+CLI's `batch --sync=` flag does this).
+
 ## Non-goals (v1.0)
 
 Networking, replication, multi-process writers, concurrent handles in
