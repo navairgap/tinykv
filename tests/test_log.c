@@ -233,16 +233,20 @@ static void test_append_rejects_bad_input(void)
     tkv_log_limits limits = {64, 1024};
     uint64_t offset;
     size_t length;
+    /* I/O failure: encoding succeeds, lseek on a closed fd does not. */
     assert(tkv_log_append(-1, TINYKV_RECORD_PUT, "k", 1, "v", 1, &limits,
                           &offset, &length) == -1);
+    /* Encoding rejections surface the codec status. */
     assert(tkv_log_append(0, TINYKV_RECORD_DELETE, "k", 1, "v", 1, &limits,
-                          &offset, &length) == -1);
+                          &offset, &length) ==
+           (int)TINYKV_RECORD_INVALID_FORMAT);
     assert(tkv_log_append(0, TINYKV_RECORD_PUT, "k", 1, "v", 1, NULL,
                           &offset, &length) == -1);
     {
         tkv_log_limits tiny = {2, 2};
         assert(tkv_log_append(0, TINYKV_RECORD_PUT, "toolong", 7, "v", 1,
-                              &tiny, &offset, &length) == -1);
+                              &tiny, &offset, &length) ==
+               (int)TINYKV_RECORD_LIMIT_EXCEEDED);
     }
 }
 

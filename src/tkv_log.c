@@ -24,7 +24,7 @@ int tkv_log_append(int fd, uint8_t type, const void *key, size_t key_length,
                                   limits->max_key_length,
                                   limits->max_value_length, &encoded,
                                   &encoded_length);
-    if (status != TINYKV_RECORD_OK) return -1;
+    if (status != TINYKV_RECORD_OK) return (int)status;
 
     offset = (uint64_t)lseek(fd, 0, SEEK_END);
     if (offset == (uint64_t)-1 || tkv_write_all(fd, encoded, encoded_length) != 0) {

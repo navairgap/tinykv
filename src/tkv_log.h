@@ -12,8 +12,9 @@ typedef struct tkv_log_limits {
 } tkv_log_limits;
 
 /* Encode and append one record at the end of fd (O_RDWR descriptor).
- * Returns 0 on success; *offset_out is the record's start offset and
- * *length_out its encoded size. */
+ * Returns 0 on success, a positive tinykv_record_status when encoding
+ * rejects the record, or -1 on I/O failure. *offset_out is the record's
+ * start offset and *length_out its encoded size. */
 int tkv_log_append(int fd, uint8_t type, const void *key, size_t key_length,
                    const void *value, size_t value_length,
                    const tkv_log_limits *limits, uint64_t *offset_out,

@@ -231,6 +231,185 @@ static void test_replay_over_limit_is_corruption(void)
     }
 }
 
+static void test_put_get_delete_roundtrip(void)
+{
+    char path[128];
+    tinykv_db *db = NULL;
+    void *value = NULL;
+    size_t value_length = 0;
+    /* Binary key and value with embedded NULs and high bytes. */
+    static const uint8_t binary_key[] = {'b', 0, 'i', 'n', 0xFF};
+    static const uint8_t binary_value[] = {0, 1, 2, 0, 254, 255};
+    db_path(path, sizeof(path), "roundtrip.db");
+    assert(tinykv_open(path, NULL, &db) == TINYKV_OK);
+
+    assert(tinykv_get(db, "missing", 7, &value, &value_length) ==
+           TINYKV_ERR_NOT_FOUND);
+    assert(value == NULL && value_length == 0);
+
+    assert(tinykv_put(db, "alpha", 5, "one", 3) == TINYKV_OK);
+    assert(tinykv_get(db, "alpha", 5, &value, &value_length) == TINYKV_OK);
+    assert(value_length == 3 && memcmp(value, "one", 3) == 0);
+    free(value);
+
+    /* Overwrites resolve to the newest value. */
+    assert(tinykv_put(db, "alpha", 5, "second-value", 12) == TINYKV_OK);
+    assert(tinykv_get(db, "alpha", 5, &value, &value_length) == TINYKV_OK);
+    assert(value_length == 12 && memcmp(value, "second-value", 12) == 0);
+    free(value);
+
+    /* Empty values round-trip as a non-NULL zero-length result. */
+    assert(tinykv_put(db, "empty", 5, NULL, 0) == TINYKV_OK);
+    assert(tinykv_get(db, "empty", 5, &value, &value_length) == TINYKV_OK);
+    assert(value != NULL && value_length == 0);
+    free(value);
+
+    /* Binary payloads survive the log verbatim. */
+    assert(tinykv_put(db, binary_key, sizeof(binary_key), binary_value,
+                      sizeof(binary_value)) == TINYKV_OK);
+    assert(tinykv_get(db, binary_key, sizeof(binary_key), &value,
+                      &value_length) == TINYKV_OK);
+    assert(value_length == sizeof(binary_value));
+    assert(memcmp(value, binary_value, sizeof(binary_value)) == 0);
+    free(value);
+
+    /* Deletes remove the key; deleting it again reports not found. */
+    assert(tinykv_delete(db, "alpha", 5) == TINYKV_OK);
+    assert(tinykv_get(db, "alpha", 5, &value, &value_length) ==
+           TINYKV_ERR_NOT_FOUND);
+    assert(tinykv_delete(db, "alpha", 5) == TINYKV_ERR_NOT_FOUND);
+    assert(tinykv_delete(db, "never-existed", 13) == TINYKV_ERR_NOT_FOUND);
+
+    tinykv_close(db);
+}
+
+static void test_zero_length_keys(void)
+{
+    char path[128];
+    tinykv_db *db = NULL;
+    void *value = NULL;
+    size_t value_length = 0;
+    db_path(path, sizeof(path), "emptykey.db");
+    assert(tinykv_open(path, NULL, &db) == TINYKV_OK);
+    assert(tinykv_put(db, NULL, 0, "root", 4) == TINYKV_OK);
+    assert(tinykv_get(db, NULL, 0, &value, &value_length) == TINYKV_OK);
+    assert(value_length == 4 && memcmp(value, "root", 4) == 0);
+    free(value);
+    assert(tinykv_put(db, NULL, 0, "new-root", 8) == TINYKV_OK);
+    assert(tinykv_get(db, NULL, 0, &value, &value_length) == TINYKV_OK);
+    assert(value_length == 8);
+    free(value);
+    tinykv_close(db);
+}
+
+static void test_write_argument_validation(void)
+{
+    char path[128];
+    tinykv_db *db = NULL;
+    tinykv_options options;
+    void *value = NULL;
+    size_t value_length = 0;
+    db_path(path, sizeof(path), "validate.db");
+    assert(tinykv_open(path, NULL, &db) == TINYKV_OK);
+
+    assert(tinykv_put(db, NULL, 3, "v", 1) == TINYKV_ERR_INVALID);
+    assert(tinykv_put(db, "k", 1, NULL, 5) == TINYKV_ERR_INVALID);
+    assert(tinykv_put(NULL, "k", 1, "v", 1) == TINYKV_ERR_INVALID);
+    assert(tinykv_get(db, NULL, 3, &value, &value_length) ==
+           TINYKV_ERR_INVALID);
+    assert(tinykv_get(db, "k", 1, NULL, &value_length) ==
+           TINYKV_ERR_INVALID);
+    assert(value == NULL && value_length == 0);
+
+    options = tinykv_options_default_for_test();
+    options.max_key_length = 4;
+    options.max_value_length = 8;
+    tinykv_close(db);
+    db_path(path, sizeof(path), "limits2.db");
+    assert(tinykv_open(path, &options, &db) == TINYKV_OK);
+    assert(tinykv_put(db, "too-long-key", 12, "v", 1) == TINYKV_ERR_LIMIT);
+    assert(tinykv_put(db, "k", 1, "too-long-value", 14) == TINYKV_ERR_LIMIT);
+    assert(tinykv_count(db, (uint64_t[1]){0}) == TINYKV_OK);
+
+    /* Read-only handles cannot write. */
+    tinykv_close(db);
+    options.read_only = 1;
+    assert(tinykv_open(path, &options, &db) == TINYKV_OK);
+    assert(tinykv_put(db, "k", 1, "v", 1) == TINYKV_ERR_INVALID);
+    assert(tinykv_delete(db, "k", 1) == TINYKV_ERR_INVALID);
+    tinykv_close(db);
+}
+
+static void test_write_reclaims_torn_tail(void)
+{
+    char path[128];
+    tinykv_db *db = NULL;
+    uint8_t partial[5] = {'T', 'K', 'V', '1', TINYKV_RECORD_PUT};
+    int fd;
+    void *value = NULL;
+    size_t value_length = 0;
+    db_path(path, sizeof(path), "reclaim.db");
+    /* Seed one valid record through a real db handle. */
+    assert(tinykv_open(path, NULL, &db) == TINYKV_OK);
+    assert(tinykv_put(db, "keep", 4, "me", 2) == TINYKV_OK);
+    tinykv_close(db);
+    /* Simulate a crash mid-append: five header bytes, no payload. */
+    fd = tkv_open_log(path, 0, NULL);
+    assert(fd >= 0);
+    assert(lseek(fd, 0, SEEK_END) >= 0);
+    assert(tkv_write_all(fd, partial, sizeof(partial)) == 0);
+    close(fd);
+
+    assert(tinykv_open(path, NULL, &db) == TINYKV_OK);
+    /* The torn tail is only reclaimed when the first write happens. */
+    assert(tinykv_put(db, "after", 5, "crash", 5) == TINYKV_OK);
+    tinykv_close(db);
+
+    /* Replay sees the valid record, the new one, and no garbage. */
+    assert(tinykv_open(path, NULL, &db) == TINYKV_OK);
+    assert(tinykv_get(db, "keep", 4, &value, &value_length) == TINYKV_OK);
+    assert(value_length == 2);
+    free(value);
+    assert(tinykv_get(db, "after", 5, &value, &value_length) == TINYKV_OK);
+    assert(value_length == 5 && memcmp(value, "crash", 5) == 0);
+    free(value);
+    tinykv_close(db);
+}
+
+static void test_restart_persistence(void)
+{
+    char path[128];
+    tinykv_db *db = NULL;
+    void *value = NULL;
+    size_t value_length = 0;
+    int i;
+    char key[16];
+    db_path(path, sizeof(path), "restart.db");
+    assert(tinykv_open(path, NULL, &db) == TINYKV_OK);
+    for (i = 0; i < 100; ++i) {
+        snprintf(key, sizeof(key), "key-%03d", i);
+        assert(tinykv_put(db, key, strlen(key), key, strlen(key)) == TINYKV_OK);
+    }
+    assert(tinykv_delete(db, "key-050", strlen("key-050")) == TINYKV_OK);
+    tinykv_close(db);
+
+    assert(tinykv_open(path, NULL, &db) == TINYKV_OK);
+    for (i = 0; i < 100; ++i) {
+        snprintf(key, sizeof(key), "key-%03d", i);
+        if (i == 50) {
+            assert(tinykv_get(db, key, strlen(key), &value, &value_length) ==
+                   TINYKV_ERR_NOT_FOUND);
+            continue;
+        }
+        assert(tinykv_get(db, key, strlen(key), &value, &value_length) ==
+               TINYKV_OK);
+        assert(value_length == strlen(key) && memcmp(value, key, value_length) == 0);
+        free(value);
+        value = NULL;
+    }
+    tinykv_close(db);
+}
+
 int main(void)
 {
     assert(mkdtemp(temp_dir) != NULL);
@@ -242,6 +421,11 @@ int main(void)
     test_version_and_status_strings();
     test_replay_builds_index();
     test_replay_over_limit_is_corruption();
+    test_put_get_delete_roundtrip();
+    test_zero_length_keys();
+    test_write_argument_validation();
+    test_write_reclaims_torn_tail();
+    test_restart_persistence();
     remove_temp_dir();
     puts("tinykv db: all tests passed");
     return 0;

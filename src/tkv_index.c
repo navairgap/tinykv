@@ -67,8 +67,8 @@ tkv_entry *tkv_index_find(const tkv_index *index, const uint8_t *key,
 {
     uint32_t hash;
     size_t i;
-    if (index == NULL || index->buckets == NULL || key == NULL ||
-        key_length > UINT32_MAX)
+    if (index == NULL || index->buckets == NULL ||
+        (key == NULL && key_length != 0) || key_length > UINT32_MAX)
         return NULL;
     hash = tkv_index_hash(key, key_length);
     for (i = index_probe_start(index, hash);; i = (i + 1) & (index->capacity - 1)) {
@@ -76,7 +76,7 @@ tkv_entry *tkv_index_find(const tkv_index *index, const uint8_t *key,
         if (slot->state == TKV_INDEX_EMPTY) return NULL;
         if (slot->state == TKV_INDEX_LIVE && slot->hash == hash &&
             slot->key_length == key_length &&
-            memcmp(slot->key, key, key_length) == 0)
+            (key_length == 0 || memcmp(slot->key, key, key_length) == 0))
             return &index->buckets[i];
     }
 }
@@ -127,7 +127,7 @@ int tkv_index_put(tkv_index *index, const uint8_t *key, size_t key_length,
         }
         if (slot->state == TKV_INDEX_LIVE && slot->hash == hash &&
             slot->key_length == key_length &&
-            memcmp(slot->key, key, key_length) == 0) {
+            (key_length == 0 || memcmp(slot->key, key, key_length) == 0)) {
             slot->offset = offset;
             slot->record_length = record_length;
             slot->value_length = value_length;

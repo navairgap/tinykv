@@ -57,7 +57,6 @@ typedef struct {
     uint64_t discarded_bytes; /* torn-tail bytes that the next write reclaims */
     uint64_t puts;
     uint64_t deletes;
-    uint64_t gets;
     uint64_t compactions;
 } tinykv_stats;
 

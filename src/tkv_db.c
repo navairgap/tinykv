@@ -95,6 +95,158 @@ static int replay_record(const tinykv_record_view *view, uint64_t offset,
     return 0;
 }
 
+static tinykv_status status_from_codec(tinykv_record_status status)
+{
+    switch (status) {
+    case TINYKV_RECORD_OK: return TINYKV_OK;
+    case TINYKV_RECORD_INVALID_ARGUMENT:
+    case TINYKV_RECORD_INVALID_TYPE:
+    case TINYKV_RECORD_INVALID_FORMAT: return TINYKV_ERR_INVALID;
+    case TINYKV_RECORD_LIMIT_EXCEEDED: return TINYKV_ERR_LIMIT;
+    case TINYKV_RECORD_TRUNCATED:
+    case TINYKV_RECORD_BAD_CHECKSUM: return TINYKV_ERR_CORRUPT;
+    case TINYKV_RECORD_OUT_OF_MEMORY: return TINYKV_ERR_NOMEM;
+    }
+    return TINYKV_ERR_INVALID;
+}
+
+static tinykv_status write_arguments_status(const tinykv_db *db,
+                                            const void *key,
+                                            size_t key_length,
+                                            const void *value,
+                                            size_t value_length)
+{
+    if (db == NULL || db->fd < 0) return TINYKV_ERR_INVALID;
+    if (key == NULL && key_length != 0) return TINYKV_ERR_INVALID;
+    if (value == NULL && value_length != 0) return TINYKV_ERR_INVALID;
+    if (key_length > (size_t)db->limits.max_key_length ||
+        key_length > UINT32_MAX)
+        return TINYKV_ERR_LIMIT;
+    if (value_length > (size_t)db->limits.max_value_length ||
+        value_length > UINT32_MAX)
+        return TINYKV_ERR_LIMIT;
+    return TINYKV_OK;
+}
+
+/* Drop a torn tail before appending; bytes after the last validated
+ * record can never be appended over without corrupting the log. */
+static tinykv_status reclaim_torn_tail(tinykv_db *db)
+{
+    if (!db->torn_tail) return TINYKV_OK;
+    if (tkv_truncate_file(db->fd, db->tail_last_good) != 0)
+        return TINYKV_ERR_IO;
+    if (tkv_fsync_file(db->fd) != 0) return TINYKV_ERR_IO;
+    db->file_size = db->tail_last_good;
+    db->torn_tail = 0;
+    return TINYKV_OK;
+}
+
+static tinykv_status write_record(tinykv_db *db, uint8_t type,
+                                  const void *key, size_t key_length,
+                                  const void *value, size_t value_length)
+{
+    tinykv_status status;
+    uint64_t offset;
+    size_t record_length;
+    int result;
+
+    status = reclaim_torn_tail(db);
+    if (status != TINYKV_OK) return status;
+    result = tkv_log_append(db->fd, type, key, key_length, value,
+                            value_length, &db->limits, &offset,
+                            &record_length);
+    if (result == -1) return TINYKV_ERR_IO;
+    if (result != 0) return status_from_codec((tinykv_record_status)result);
+    if (db->options.sync == TINYKV_SYNC_EVERY_WRITE &&
+        tkv_fsync_file(db->fd) != 0)
+        return TINYKV_ERR_IO;
+    if (type == TINYKV_RECORD_PUT) {
+        if (tkv_index_put(&db->index, (const uint8_t *)key, key_length,
+                          offset, (uint32_t)record_length,
+                          (uint32_t)value_length) != 0)
+            return TINYKV_ERR_NOMEM;
+        db->puts++;
+    } else {
+        tkv_index_remove(&db->index, (const uint8_t *)key, key_length);
+        db->deletes++;
+    }
+    db->file_size = offset + record_length;
+    return TINYKV_OK;
+}
+
+tinykv_status tinykv_put(tinykv_db *db, const void *key, size_t key_length,
+                         const void *value, size_t value_length)
+{
+    tinykv_status status =
+        write_arguments_status(db, key, key_length, value, value_length);
+    if (status != TINYKV_OK) return status;
+    if (db->options.read_only) return TINYKV_ERR_INVALID;
+    return write_record(db, TINYKV_RECORD_PUT, key, key_length, value,
+                        value_length);
+}
+
+tinykv_status tinykv_delete(tinykv_db *db, const void *key, size_t key_length)
+{
+    tinykv_status status =
+        write_arguments_status(db, key, key_length, NULL, 0);
+    if (status != TINYKV_OK) return status;
+    if (db->options.read_only) return TINYKV_ERR_INVALID;
+    if (tkv_index_find(&db->index, (const uint8_t *)key, key_length) == NULL)
+        return TINYKV_ERR_NOT_FOUND;
+    return write_record(db, TINYKV_RECORD_DELETE, key, key_length, NULL, 0);
+}
+
+tinykv_status tinykv_get(const tinykv_db *db, const void *key,
+                         size_t key_length, void **out_value,
+                         size_t *out_value_length)
+{
+    const tkv_entry *entry;
+    uint8_t *record = NULL;
+    tinykv_record_view view;
+    size_t consumed = 0;
+    void *value;
+    tinykv_record_status status;
+
+    if (out_value == NULL || out_value_length == NULL)
+        return TINYKV_ERR_INVALID;
+    *out_value = NULL;
+    *out_value_length = 0;
+    if (db == NULL || db->fd < 0 || (key == NULL && key_length != 0))
+        return TINYKV_ERR_INVALID;
+
+    entry = tkv_index_find(&db->index, (const uint8_t *)key, key_length);
+    if (entry == NULL) return TINYKV_ERR_NOT_FOUND;
+
+    record = (uint8_t *)malloc(entry->record_length);
+    if (record == NULL) return TINYKV_ERR_NOMEM;
+    if (tkv_pread_all(db->fd, record, entry->record_length,
+                      entry->offset) != 0) {
+        free(record);
+        return TINYKV_ERR_IO;
+    }
+    status = tinykv_record_decode(record, entry->record_length,
+                                  db->limits.max_key_length,
+                                  db->limits.max_value_length, &view,
+                                  &consumed);
+    if (status != TINYKV_RECORD_OK || view.type != TINYKV_RECORD_PUT ||
+        view.key_length != key_length ||
+        (key_length != 0 && memcmp(view.key, key, key_length) != 0)) {
+        free(record);
+        return TINYKV_ERR_CORRUPT;
+    }
+    value = malloc(view.value_length ? view.value_length : 1);
+    if (value == NULL) {
+        free(record);
+        return TINYKV_ERR_NOMEM;
+    }
+    if (view.value_length != 0)
+        memcpy(value, view.value, view.value_length);
+    free(record);
+    *out_value = value;
+    *out_value_length = view.value_length;
+    return TINYKV_OK;
+}
+
 static void db_free(tinykv_db *db)
 {
     if (db == NULL) return;
