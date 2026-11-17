@@ -1074,6 +1074,66 @@ static void test_verify_and_repair_on_missing_file(void)
     assert(access(bak, F_OK) == -1);
 }
 
+static void test_every_single_byte_corruption_is_classified(void)
+{
+    char path[128];
+    tinykv_db *db = NULL;
+    int fd, position;
+    void *value = NULL;
+    size_t value_length = 0;
+    uint64_t count = 0;
+    db_path(path, sizeof(path), "sweep.db");
+    assert(tinykv_open(path, NULL, &db) == TINYKV_OK);
+    assert(tinykv_put(db, "alpha", 5, "one", 3) == TINYKV_OK);
+    assert(tinykv_put(db, "beta", 4, "two", 3) == TINYKV_OK);
+    tinykv_close(db);
+
+    /* Property: any single flipped byte either (a) fails the open as
+     * corruption, or (b) makes a declared length claim that runs past
+     * EOF and is therefore classified a torn tail — in which case only
+     * records before it survive, and they must verify byte-for-byte.
+     * A CRC-32 sees every single-byte change, so nothing else can
+     * happen. */
+    for (position = 0; position < 49; ++position) {
+        tinykv_status status;
+        fd = tkv_open_log(path, 0, NULL);
+        assert(fd >= 0);
+        {
+            uint8_t original, flipped;
+            assert(tkv_pread_all(fd, &original, 1, (uint64_t)position) == 0);
+            flipped = (uint8_t)(original ^ 0x01);
+            assert(pwrite(fd, &flipped, 1, (off_t)position) == 1);
+        }
+        status = tinykv_open(path, NULL, &db);
+        assert(status == TINYKV_OK || status == TINYKV_ERR_CORRUPT);
+        if (status == TINYKV_OK) {
+            assert(tinykv_count(db, &count) == TINYKV_OK);
+            assert(count == 0 || count == 1);
+            if (count == 1) {
+                assert(tinykv_get(db, "alpha", 5, &value, &value_length) ==
+                       TINYKV_OK);
+                assert(value_length == 3 &&
+                       memcmp(value, "one", 3) == 0);
+                free(value);
+                value = NULL;
+            }
+            tinykv_close(db);
+        } else {
+            assert(db == NULL);
+        }
+        /* Restore the original byte. */
+        fd = tkv_open_log(path, 0, NULL);
+        assert(fd >= 0);
+        {
+            uint8_t original;
+            assert(tkv_pread_all(fd, &original, 1, (uint64_t)position) == 0);
+            original = (uint8_t)(original ^ 0x01);
+            assert(pwrite(fd, &original, 1, (off_t)position) == 1);
+        }
+        close(fd);
+    }
+}
+
 int main(void)
 {
     assert(mkdtemp(temp_dir) != NULL);
@@ -1107,6 +1167,7 @@ int main(void)
     test_compaction_after_heavy_overwrites();
     test_reader_sees_writer_state_without_lock();
     test_verify_and_repair_on_missing_file();
+    test_every_single_byte_corruption_is_classified();
     remove_temp_dir();
     puts("tinykv db: all tests passed");
     return 0;
