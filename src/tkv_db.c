@@ -707,6 +707,121 @@ tinykv_status tinykv_get_into(const tinykv_db *db, const void *key,
     return TINYKV_OK;
 }
 
+struct iter_key {
+    uint8_t *key;
+    uint32_t key_length;
+};
+
+struct tinykv_iter {
+    tinykv_db *db;
+    struct iter_key *keys;
+    size_t count, position;
+    uint8_t *value;
+    size_t value_length;
+};
+
+static int iter_key_compare(const void *left, const void *right)
+{
+    const struct iter_key *a = (const struct iter_key *)left;
+    const struct iter_key *b = (const struct iter_key *)right;
+    size_t common = a->key_length < b->key_length ? a->key_length
+                                                  : b->key_length;
+    int order = common == 0 ? 0 : memcmp(a->key, b->key, common);
+    if (order != 0) return order;
+    if (a->key_length == b->key_length) return 0;
+    return a->key_length < b->key_length ? -1 : 1;
+}
+
+static void iter_collect(tkv_entry *entry, void *user)
+{
+    struct tinykv_iter *iter = (struct tinykv_iter *)user;
+    uint8_t *copy;
+    /* The caller holds the db lock discipline; the index must not grow
+     * while iterating, which holds because we never put during a walk. */
+    copy = (uint8_t *)malloc(entry->key_length ? entry->key_length : 1);
+    if (copy == NULL) return; /* leave the slot NULL; skipped below */
+    if (entry->key_length != 0)
+        memcpy(copy, entry->key, entry->key_length);
+    iter->keys[iter->count].key = copy;
+    iter->keys[iter->count].key_length = entry->key_length;
+    iter->count++;
+}
+
+tinykv_status tinykv_iter_new(const tinykv_db *db, tinykv_iter **out_iter)
+{
+    struct tinykv_iter *iter;
+    size_t index_count;
+    if (db == NULL || out_iter == NULL) return TINYKV_ERR_INVALID;
+    *out_iter = NULL;
+    iter = (struct tinykv_iter *)calloc(1, sizeof(*iter));
+    if (iter == NULL) return TINYKV_ERR_NOMEM;
+    iter->db = (tinykv_db *)db;
+    index_count = tkv_index_count(&db->index);
+    iter->keys = (struct iter_key *)calloc(
+        index_count ? index_count : 1, sizeof(struct iter_key));
+    if (iter->keys == NULL) {
+        free(iter);
+        return TINYKV_ERR_NOMEM;
+    }
+    tkv_index_foreach(&db->index, iter_collect, iter);
+    if (iter->count != index_count) {
+        tinykv_iter_free(iter);
+        return TINYKV_ERR_NOMEM;
+    }
+    qsort(iter->keys, iter->count, sizeof(struct iter_key),
+          iter_key_compare);
+    *out_iter = iter;
+    return TINYKV_OK;
+}
+
+tinykv_status tinykv_iter_next(tinykv_iter *iter, const void **out_key,
+                               size_t *out_key_length, const void **out_value,
+                               size_t *out_value_length)
+{
+    tinykv_status status;
+    if (iter == NULL || out_key == NULL || out_key_length == NULL ||
+        out_value == NULL || out_value_length == NULL)
+        return TINYKV_ERR_INVALID;
+
+    free(iter->value);
+    iter->value = NULL;
+    iter->value_length = 0;
+
+    while (iter->position < iter->count) {
+        struct iter_key *current = &iter->keys[iter->position++];
+        void *value = NULL;
+        size_t value_length = 0;
+        status = tinykv_get(iter->db, current->key, current->key_length,
+                            &value, &value_length);
+        if (status == TINYKV_ERR_NOT_FOUND)
+            continue; /* deleted since the snapshot: skip */
+        if (status != TINYKV_OK) return status;
+        iter->value = (uint8_t *)value;
+        iter->value_length = value_length;
+        *out_key = current->key;
+        *out_key_length = current->key_length;
+        *out_value = iter->value;
+        *out_value_length = value_length;
+        return TINYKV_OK;
+    }
+    *out_key = NULL;
+    *out_key_length = 0;
+    *out_value = NULL;
+    *out_value_length = 0;
+    return TINYKV_OK;
+}
+
+void tinykv_iter_free(tinykv_iter *iter)
+{
+    size_t i;
+    if (iter == NULL) return;
+    for (i = 0; i < iter->count; ++i)
+        free(iter->keys[i].key);
+    free(iter->keys);
+    free(iter->value);
+    free(iter);
+}
+
 tinykv_status tinykv_count(const tinykv_db *db, uint64_t *out_count)
 {
     if (db == NULL || out_count == NULL) return TINYKV_ERR_INVALID;

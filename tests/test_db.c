@@ -730,6 +730,75 @@ static void test_get_into_copies_without_allocation(void)
     tinykv_close(db);
 }
 
+static void test_iteration_is_sorted_and_skips_deletes(void)
+{
+    char path[128];
+    tinykv_db *db = NULL;
+    tinykv_iter *iter = NULL;
+    const void *key = NULL, *value = NULL;
+    size_t klen = 0, vlen = 0;
+    int i;
+    const char *expected[] = {"key-01", "key-03", "key-04", "key-05"};
+    db_path(path, sizeof(path), "iter.db");
+    assert(tinykv_open(path, NULL, &db) == TINYKV_OK);
+    assert(tinykv_put(db, "key-03", 6, "v3", 2) == TINYKV_OK);
+    assert(tinykv_put(db, "key-01", 6, "v1", 2) == TINYKV_OK);
+    assert(tinykv_put(db, "key-05", 6, "v5", 2) == TINYKV_OK);
+    assert(tinykv_put(db, "key-02", 6, "v2", 2) == TINYKV_OK);
+    assert(tinykv_put(db, "key-04", 6, "v4", 2) == TINYKV_OK);
+    assert(tinykv_put(db, "key-01", 6, "v1-new", 6) == TINYKV_OK);
+    assert(tinykv_delete(db, "key-02", 6) == TINYKV_OK);
+
+    assert(tinykv_iter_new(db, &iter) == TINYKV_OK);
+    i = 0;
+    while (tinykv_iter_next(iter, &key, &klen, &value, &vlen) == TINYKV_OK &&
+           key != NULL) {
+        assert(i < 4);
+        assert(klen == 6 && memcmp(key, expected[i], 6) == 0);
+        if (i == 0)
+            assert(vlen == 6 && memcmp(value, "v1-new", 6) == 0);
+        else
+            assert(vlen == 2);
+        i++;
+    }
+    assert(i == 4); /* key-02 was deleted; no tombstone appears */
+    tinykv_iter_free(iter);
+    tinykv_iter_free(NULL);
+    tinykv_close(db);
+}
+
+static void test_iteration_empty_and_fresh_values(void)
+{
+    char path[128];
+    tinykv_db *db = NULL;
+    tinykv_iter *iter = NULL;
+    const void *key = NULL, *value = NULL;
+    size_t klen = 0, vlen = 0;
+    db_path(path, sizeof(path), "iter-empty.db");
+    assert(tinykv_open(path, NULL, &db) == TINYKV_OK);
+    assert(tinykv_iter_new(db, &iter) == TINYKV_OK);
+    assert(tinykv_iter_next(iter, &key, &klen, &value, &vlen) == TINYKV_OK);
+    assert(key == NULL && value == NULL);
+    tinykv_iter_free(iter);
+
+    /* Values are re-read on each step: a delete before the iterator
+     * reaches a key makes the iterator skip it. */
+    assert(tinykv_put(db, "a", 1, "1", 1) == TINYKV_OK);
+    assert(tinykv_put(db, "b", 1, "2", 1) == TINYKV_OK);
+    assert(tinykv_put(db, "c", 1, "3", 1) == TINYKV_OK);
+    assert(tinykv_iter_new(db, &iter) == TINYKV_OK);
+    assert(tinykv_iter_next(iter, &key, &klen, &value, &vlen) == TINYKV_OK);
+    assert(klen == 1 && *(const char *)key == 'a');
+    assert(tinykv_delete(db, "b", 1) == TINYKV_OK);
+    assert(tinykv_iter_next(iter, &key, &klen, &value, &vlen) == TINYKV_OK);
+    assert(klen == 1 && *(const char *)key == 'c'); /* b skipped */
+    assert(vlen == 1 && *(const char *)value == '3');
+    assert(tinykv_iter_next(iter, &key, &klen, &value, &vlen) == TINYKV_OK);
+    assert(key == NULL);
+    tinykv_iter_free(iter);
+    tinykv_close(db);
+}
+
 int main(void)
 {
     assert(mkdtemp(temp_dir) != NULL);
@@ -755,6 +824,8 @@ int main(void)
     test_repair_stops_at_midfile_corruption();
     test_repair_clean_log_and_lock();
     test_get_into_copies_without_allocation();
+    test_iteration_is_sorted_and_skips_deletes();
+    test_iteration_empty_and_fresh_values();
     remove_temp_dir();
     puts("tinykv db: all tests passed");
     return 0;
