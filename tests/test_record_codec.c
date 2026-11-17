@@ -97,6 +97,62 @@ static void test_rejects_invalid_delete_payload_and_record_type(void)
     assert(encoded == NULL && length == 0);
 }
 
+static void test_exact_limit_boundaries(void)
+{
+    enum { KEY_LIMIT = 8, VALUE_LIMIT = 16 };
+    static uint8_t max_key[KEY_LIMIT], max_value[VALUE_LIMIT];
+    /* Oversized inputs need real storage of their own: a length one
+     * past the limit must never read past a limit-sized buffer. */
+    static uint8_t oversized_key[KEY_LIMIT + 1];
+    static uint8_t oversized_value[VALUE_LIMIT + 1];
+    uint8_t *encoded = NULL;
+    size_t length = 0, consumed = 0;
+    tinykv_record_view decoded;
+    unsigned i;
+
+    for (i = 0; i < KEY_LIMIT; ++i) max_key[i] = (uint8_t)(0x80 + i);
+    for (i = 0; i <= KEY_LIMIT; ++i) oversized_key[i] = (uint8_t)(0x80 + i);
+    for (i = 0; i < VALUE_LIMIT; ++i) max_value[i] = (uint8_t)(0xFF - i);
+    for (i = 0; i <= VALUE_LIMIT; ++i) oversized_value[i] = (uint8_t)(0xFF - i);
+
+    /* Exactly at the limit must encode and decode. */
+    assert(tinykv_record_encode(TINYKV_RECORD_PUT, max_key, KEY_LIMIT,
+                                max_value, VALUE_LIMIT, KEY_LIMIT,
+                                VALUE_LIMIT, &encoded, &length) ==
+           TINYKV_RECORD_OK);
+    assert(length == TINYKV_RECORD_HEADER_SIZE + KEY_LIMIT + VALUE_LIMIT);
+    assert(tinykv_record_decode(encoded, length, KEY_LIMIT, VALUE_LIMIT,
+                                &decoded, &consumed) == TINYKV_RECORD_OK);
+    assert(consumed == length && decoded.key_length == KEY_LIMIT &&
+           decoded.value_length == VALUE_LIMIT);
+    assert(memcmp(decoded.key, max_key, KEY_LIMIT) == 0);
+    assert(memcmp(decoded.value, max_value, VALUE_LIMIT) == 0);
+    free(encoded);
+
+    /* One byte beyond the limit is refused at encode. */
+    encoded = (uint8_t *)1;
+    assert(tinykv_record_encode(TINYKV_RECORD_PUT, oversized_key,
+                                KEY_LIMIT + 1, max_value, VALUE_LIMIT,
+                                KEY_LIMIT, VALUE_LIMIT, &encoded, &length) ==
+           TINYKV_RECORD_LIMIT_EXCEEDED);
+    assert(encoded == NULL && length == 0);
+    assert(tinykv_record_encode(TINYKV_RECORD_PUT, max_key, KEY_LIMIT,
+                                oversized_value, VALUE_LIMIT + 1, KEY_LIMIT,
+                                VALUE_LIMIT, &encoded, &length) ==
+           TINYKV_RECORD_LIMIT_EXCEEDED);
+
+    /* A decoder with tighter limits rejects an oversized record. */
+    assert(tinykv_record_encode(TINYKV_RECORD_PUT, oversized_key,
+                                KEY_LIMIT + 1, max_value, VALUE_LIMIT,
+                                1024, 1024, &encoded, &length) ==
+           TINYKV_RECORD_OK);
+    assert(tinykv_record_decode(encoded, length, KEY_LIMIT, VALUE_LIMIT,
+                                &decoded, &consumed) ==
+           TINYKV_RECORD_LIMIT_EXCEEDED);
+    assert(consumed == 0);
+    free(encoded);
+}
+
 int main(void)
 {
     test_crc_vector();
@@ -106,6 +162,7 @@ int main(void)
     test_null_input_clears_decode_outputs();
     test_enforces_limits_before_payload_read();
     test_rejects_invalid_delete_payload_and_record_type();
+    test_exact_limit_boundaries();
     puts("tinykv record codec: all tests passed");
     return 0;
 }
