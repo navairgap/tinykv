@@ -663,6 +663,50 @@ out:
     return status;
 }
 
+tinykv_status tinykv_get_into(const tinykv_db *db, const void *key,
+                              size_t key_length, void *buffer,
+                              size_t capacity, size_t *out_value_length)
+{
+    const tkv_entry *entry;
+    uint8_t *record = NULL;
+    tinykv_record_view view;
+    size_t consumed = 0;
+    tinykv_record_status status;
+
+    if (out_value_length == NULL) return TINYKV_ERR_INVALID;
+    *out_value_length = 0;
+    if (db == NULL || db->fd < 0 || (key == NULL && key_length != 0) ||
+        (buffer == NULL && capacity != 0))
+        return TINYKV_ERR_INVALID;
+
+    entry = tkv_index_find(&db->index, (const uint8_t *)key, key_length);
+    if (entry == NULL) return TINYKV_ERR_NOT_FOUND;
+    *out_value_length = entry->value_length;
+    if (entry->value_length > capacity) return TINYKV_ERR_LIMIT;
+
+    record = (uint8_t *)malloc(entry->record_length);
+    if (record == NULL) return TINYKV_ERR_NOMEM;
+    if (tkv_pread_all(db->fd, record, entry->record_length,
+                      entry->offset) != 0) {
+        free(record);
+        return TINYKV_ERR_IO;
+    }
+    status = tinykv_record_decode(record, entry->record_length,
+                                  db->limits.max_key_length,
+                                  db->limits.max_value_length, &view,
+                                  &consumed);
+    if (status != TINYKV_RECORD_OK || view.type != TINYKV_RECORD_PUT ||
+        view.key_length != key_length ||
+        (key_length != 0 && memcmp(view.key, key, key_length) != 0)) {
+        free(record);
+        return TINYKV_ERR_CORRUPT;
+    }
+    if (view.value_length != 0)
+        memcpy(buffer, view.value, view.value_length);
+    free(record);
+    return TINYKV_OK;
+}
+
 tinykv_status tinykv_count(const tinykv_db *db, uint64_t *out_count)
 {
     if (db == NULL || out_count == NULL) return TINYKV_ERR_INVALID;

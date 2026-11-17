@@ -697,6 +697,39 @@ static void test_repair_clean_log_and_lock(void)
     assert(access(bak, F_OK) == -1);
 }
 
+static void test_get_into_copies_without_allocation(void)
+{
+    char path[128];
+    tinykv_db *db = NULL;
+    char buffer[64];
+    size_t value_length = 0;
+    db_path(path, sizeof(path), "getinto.db");
+    assert(tinykv_open(path, NULL, &db) == TINYKV_OK);
+    assert(tinykv_put(db, "alpha", 5, "payload-bytes", 13) == TINYKV_OK);
+    assert(tinykv_put(db, "empty", 5, NULL, 0) == TINYKV_OK);
+
+    assert(tinykv_get_into(db, "alpha", 5, buffer, sizeof(buffer),
+                           &value_length) == TINYKV_OK);
+    assert(value_length == 13 && memcmp(buffer, "payload-bytes", 13) == 0);
+    /* Exact-capacity read works. */
+    assert(tinykv_get_into(db, "alpha", 5, buffer, 13, &value_length) ==
+           TINYKV_OK);
+    /* A short buffer reports the needed length. */
+    assert(tinykv_get_into(db, "alpha", 5, buffer, 5, &value_length) ==
+           TINYKV_ERR_LIMIT);
+    assert(value_length == 13);
+    /* Zero-length values need no buffer space. */
+    assert(tinykv_get_into(db, "empty", 5, NULL, 0, &value_length) ==
+           TINYKV_OK);
+    assert(value_length == 0);
+    /* Missing keys still report not found. */
+    assert(tinykv_get_into(db, "missing", 7, buffer, sizeof(buffer),
+                           &value_length) == TINYKV_ERR_NOT_FOUND);
+    assert(tinykv_get_into(db, "alpha", 5, NULL, 10, &value_length) ==
+           TINYKV_ERR_INVALID);
+    tinykv_close(db);
+}
+
 int main(void)
 {
     assert(mkdtemp(temp_dir) != NULL);
@@ -721,6 +754,7 @@ int main(void)
     test_repair_is_non_destructive();
     test_repair_stops_at_midfile_corruption();
     test_repair_clean_log_and_lock();
+    test_get_into_copies_without_allocation();
     remove_temp_dir();
     puts("tinykv db: all tests passed");
     return 0;
