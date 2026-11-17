@@ -1,5 +1,7 @@
 # tinykv
 
+[![CI](https://github.com/navairgap/tinykv/actions/workflows/ci.yml/badge.svg)](https://github.com/navairgap/tinykv/actions/workflows/ci.yml)
+
 A tiny, crash-safe embedded key-value store in C11. One file, zero
 dependencies, append-only storage with CRC-32 checksums, an in-memory
 hash index, and explicit recovery and repair semantics — the classic

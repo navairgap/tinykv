@@ -4,6 +4,26 @@ All notable changes to tinykv are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 versions [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Features
+
+- `tinykv copy` for consistent snapshots into a new file
+- `stats --json`, `get --raw`, and `batch --sync=` durability choice
+
+### Fixed
+
+- Sanitizer flags now propagate to every make invocation (`SAN=1`)
+- The tool detects stdout failures (ENOSPC, closed consumer) and exits 6
+- File copies are fsynced before success is reported
+- Index capacity doubling guards against size_t overflow
+
+### Added
+
+- Exhaustive truncation sweep and single-byte corruption sweep tests
+- Randomized operations checked against a reference model
+- Cross-process lock coverage, `SECURITY.md`, release artifact workflow
+
 ## [1.0.0] - 2026-11-17
 
 First stable release: a complete, crash-safe embedded key-value store on
