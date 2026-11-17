@@ -410,6 +410,55 @@ static void test_restart_persistence(void)
     tinykv_close(db);
 }
 
+static void test_stats_track_activity(void)
+{
+    char path[128];
+    tinykv_db *db = NULL;
+    tinykv_stats stats;
+    int fd;
+    uint8_t partial[5] = {'T', 'K', 'V', '1', TINYKV_RECORD_PUT};
+    uint64_t count = 0;
+    db_path(path, sizeof(path), "stats.db");
+    assert(tinykv_open(path, NULL, &db) == TINYKV_OK);
+    assert(tinykv_get_stats(db, &stats) == TINYKV_OK);
+    assert(stats.records == 0 && stats.file_size == 0 && stats.puts == 0);
+
+    assert(tinykv_put(db, "alpha", 5, "one", 3) == TINYKV_OK);
+    assert(tinykv_put(db, "beta", 4, "two", 3) == TINYKV_OK);
+    assert(tinykv_put(db, "alpha", 5, "uno", 3) == TINYKV_OK);
+    assert(tinykv_delete(db, "beta", 4) == TINYKV_OK);
+    assert(tinykv_get_stats(db, &stats) == TINYKV_OK);
+    assert(stats.records == 1);
+    assert(stats.puts == 3 && stats.deletes == 1);
+    /* Only alpha's newest record is live (25 bytes). The first alpha, the
+     * beta record, and the tombstone are dead. */
+    assert(stats.live_bytes == 25);
+    {
+        struct stat st;
+        assert(stat(path, &st) == 0);
+        assert(stats.file_size == (uint64_t)st.st_size);
+    }
+    assert(stats.dead_bytes == stats.file_size - stats.live_bytes);
+    assert(stats.discarded_bytes == 0);
+    tinykv_close(db);
+
+    /* A torn tail shows up as discarded bytes until the next write. */
+    fd = tkv_open_log(path, 0, NULL);
+    assert(fd >= 0);
+    assert(lseek(fd, 0, SEEK_END) >= 0);
+    assert(tkv_write_all(fd, partial, sizeof(partial)) == 0);
+    close(fd);
+    assert(tinykv_open(path, NULL, &db) == TINYKV_OK);
+    assert(tinykv_get_stats(db, &stats) == TINYKV_OK);
+    assert(stats.discarded_bytes == sizeof(partial));
+    assert(stats.dead_bytes >= stats.discarded_bytes);
+    assert(tinykv_count(db, &count) == TINYKV_OK && count == 1);
+    assert(tinykv_put(db, "gamma", 5, "three", 5) == TINYKV_OK);
+    assert(tinykv_get_stats(db, &stats) == TINYKV_OK);
+    assert(stats.discarded_bytes == 0);
+    tinykv_close(db);
+}
+
 int main(void)
 {
     assert(mkdtemp(temp_dir) != NULL);
@@ -426,6 +475,7 @@ int main(void)
     test_write_argument_validation();
     test_write_reclaims_torn_tail();
     test_restart_persistence();
+    test_stats_track_activity();
     remove_temp_dir();
     puts("tinykv db: all tests passed");
     return 0;

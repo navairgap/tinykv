@@ -348,6 +348,36 @@ fail:
     return status;
 }
 
+struct bytes_state {
+    uint64_t total;
+};
+
+static void add_record_bytes(const tkv_entry *entry, void *user)
+{
+    struct bytes_state *state = (struct bytes_state *)user;
+    state->total += entry->record_length;
+}
+
+tinykv_status tinykv_get_stats(const tinykv_db *db, tinykv_stats *out_stats)
+{
+    struct bytes_state bytes = {0};
+    if (db == NULL || out_stats == NULL) return TINYKV_ERR_INVALID;
+    memset(out_stats, 0, sizeof(*out_stats));
+    tkv_index_foreach(&db->index, add_record_bytes, &bytes);
+    out_stats->records = (uint64_t)tkv_index_count(&db->index);
+    out_stats->file_size = db->file_size;
+    out_stats->live_bytes = bytes.total;
+    out_stats->dead_bytes = db->file_size > bytes.total
+                                ? db->file_size - bytes.total
+                                : 0;
+    out_stats->discarded_bytes =
+        db->torn_tail ? db->file_size - db->tail_last_good : 0;
+    out_stats->puts = db->puts;
+    out_stats->deletes = db->deletes;
+    out_stats->compactions = db->compactions;
+    return TINYKV_OK;
+}
+
 tinykv_status tinykv_count(const tinykv_db *db, uint64_t *out_count)
 {
     if (db == NULL || out_count == NULL) return TINYKV_ERR_INVALID;
