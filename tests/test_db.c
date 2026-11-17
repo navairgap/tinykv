@@ -972,6 +972,59 @@ static void test_randomized_operations_match_reference(void)
     tinykv_close(db);
 }
 
+static void test_compaction_after_heavy_overwrites(void)
+{
+    char path[128], key[24], value[48];
+    tinykv_db *db = NULL;
+    tinykv_stats stats;
+    void *got = NULL;
+    size_t got_length = 0;
+    int round, i;
+    db_path(path, sizeof(path), "compact-heavy.db");
+    assert(tinykv_open(path, NULL, &db) == TINYKV_OK);
+    /* Three full overwrite rounds plus a delete of every fifth key. */
+    for (round = 0; round < 3; ++round) {
+        for (i = 0; i < 1000; ++i) {
+            snprintf(key, sizeof(key), "key-%04d", i);
+            snprintf(value, sizeof(value), "round-%d-value-%04d", round, i);
+            assert(tinykv_put(db, key, strlen(key), value,
+                              strlen(value)) == TINYKV_OK);
+        }
+    }
+    for (i = 0; i < 1000; i += 5) {
+        snprintf(key, sizeof(key), "key-%04d", i);
+        assert(tinykv_delete(db, key, strlen(key)) == TINYKV_OK);
+    }
+    assert(tinykv_get_stats(db, &stats) == TINYKV_OK);
+    assert(stats.records == 800);
+    {
+        uint64_t before = stats.file_size;
+        assert(before > stats.live_bytes * 2); /* mostly garbage */
+        assert(tinykv_compact(db) == TINYKV_OK);
+        assert(tinykv_get_stats(db, &stats) == TINYKV_OK);
+        assert(stats.dead_bytes == 0);
+        assert(stats.file_size == stats.live_bytes);
+        assert(stats.file_size < before / 2);
+        assert(stats.compactions == 1);
+    }
+    for (i = 0; i < 1000; ++i) {
+        snprintf(key, sizeof(key), "key-%04d", i);
+        snprintf(value, sizeof(value), "round-2-value-%04d", i);
+        if (i % 5 == 0) {
+            assert(tinykv_get(db, key, strlen(key), &got, &got_length) ==
+                   TINYKV_ERR_NOT_FOUND);
+            continue;
+        }
+        assert(tinykv_get(db, key, strlen(key), &got, &got_length) ==
+               TINYKV_OK);
+        assert(got_length == strlen(value));
+        assert(memcmp(got, value, got_length) == 0);
+        free(got);
+        got = NULL;
+    }
+    tinykv_close(db);
+}
+
 int main(void)
 {
     assert(mkdtemp(temp_dir) != NULL);
@@ -1002,6 +1055,7 @@ int main(void)
     test_accessors_report_path_and_size();
     test_max_length_boundaries();
     test_randomized_operations_match_reference();
+    test_compaction_after_heavy_overwrites();
     remove_temp_dir();
     puts("tinykv db: all tests passed");
     return 0;
