@@ -1,0 +1,36 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build with strict warnings
+        run: make all CC=gcc
+      - name: Run tests
+        run: make test CC=gcc
+      - name: CLI smoke test
+        run: make smoke CC=gcc
+      - name: Build artifacts
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          make dist VERSION="$version"
+          cp build/tinykv "tinykv-v${version}-linux-x86_64"
+          sha256sum "tinykv-${version}.tar.gz" \
+                    "tinykv-v${version}-linux-x86_64" > SHA256SUMS.txt
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            tinykv-*.tar.gz tinykv-*-linux-x86_64 SHA256SUMS.txt \
+            --title "tinykv $GITHUB_REF_NAME" \
+            --verify-tag \
+            --generate-notes
