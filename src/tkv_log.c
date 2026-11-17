@@ -5,6 +5,9 @@
 #include <string.h>
 #include <unistd.h>
 
+/* Replay chunk size: large enough to stream typical records with few
+ * syscalls, small enough that the buffer stays cheap. Measured parity
+ * with 256 KiB on the make bench reopen workload. */
 #define TKV_LOG_CHUNK 65536u
 
 int tkv_log_append(int fd, uint8_t type, const void *key, size_t key_length,

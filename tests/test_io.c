@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 static char temp_dir[64] = "/tmp/tinykv-io-XXXXXX";
@@ -87,6 +88,40 @@ static void test_lock_is_exclusive(void)
     close(second);
 }
 
+static void test_lock_blocks_other_processes(void)
+{
+    char path[128];
+    int fd, status = -1;
+    pid_t pid;
+    snprintf(path, sizeof(path), "%s/crossproc.lock", temp_dir);
+    fd = tkv_open_log(path, 0, NULL);
+    assert(fd >= 0);
+    assert(tkv_lock_try(fd, 1) == 0);
+    fflush(NULL);
+    pid = fork();
+    if (pid == 0) {
+        /* Child: a different open-file description, a different process.
+         * Exit 0 if the exclusive lock was refused, 1 if it was granted. */
+        int other = tkv_open_log(path, 0, NULL);
+        if (other < 0) _exit(2);
+        _exit(tkv_lock_try(other, 1) == -1 ? 0 : 1);
+    }
+    assert(pid > 0);
+    assert(waitpid(pid, &status, 0) == pid);
+    assert(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+    /* Release and verify another process can now take it. */
+    tkv_unlock(fd);
+    pid = fork();
+    if (pid == 0) {
+        int other = tkv_open_log(path, 0, NULL);
+        if (other < 0) _exit(2);
+        _exit(tkv_lock_try(other, 1) == 0 ? 0 : 1);
+    }
+    assert(waitpid(pid, &status, 0) == pid);
+    assert(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+    close(fd);
+}
+
 static void test_rename_sync_and_copy(void)
 {
     char from[128], to[128], backup[128];
@@ -137,6 +172,7 @@ int main(void)
     make_temp_dir();
     test_write_pread_size_roundtrip();
     test_lock_is_exclusive();
+    test_lock_blocks_other_processes();
     test_rename_sync_and_copy();
     test_fsync_path_and_sidecar();
     remove_temp_dir();
