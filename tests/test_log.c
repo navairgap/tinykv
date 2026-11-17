@@ -250,6 +250,55 @@ static void test_append_rejects_bad_input(void)
     }
 }
 
+static void test_scan_survives_every_truncation(void)
+{
+    char path[128];
+    tkv_log_limits limits = {64, 1024};
+    struct captured got;
+    tkv_log_scan_result result;
+    uint64_t offset, full_size, cut;
+    size_t length;
+    int fd, iterations = 0;
+    snprintf(path, sizeof(path), "%s/matrix.log", temp_dir);
+    fd = tkv_open_log(path, 0, NULL);
+    assert(fd >= 0);
+    assert(tkv_log_append(fd, TINYKV_RECORD_PUT, "alpha", 5, "one", 3,
+                          &limits, &offset, &length) == 0);
+    assert(tkv_log_append(fd, TINYKV_RECORD_PUT, "beta", 4, "two", 3,
+                          &limits, &offset, &length) == 0);
+    full_size = offset + length;
+
+    /* Cutting at any byte position can only produce a clean scan (cuts
+     * at record boundaries) or a truncated tail; never corruption. The
+     * log is rebuilt for every cut because a prior truncation destroys
+     * bytes that ftruncate cannot restore when growing back. */
+    for (cut = 0; cut <= full_size; ++cut) {
+        assert(tkv_truncate_file(fd, 0) == 0);
+        assert(tkv_log_append(fd, TINYKV_RECORD_PUT, "alpha", 5, "one", 3,
+                              &limits, &offset, &length) == 0);
+        assert(tkv_log_append(fd, TINYKV_RECORD_PUT, "beta", 4, "two", 3,
+                              &limits, &offset, &length) == 0);
+        assert(tkv_truncate_file(fd, cut) == 0);
+        memset(&got, 0, sizeof(got));
+        assert(tkv_log_scan(fd, &limits, capture, &got, &result) == 0);
+        iterations++;
+        assert(result.stop_status == TINYKV_RECORD_OK ||
+               result.stop_status == TINYKV_RECORD_TRUNCATED);
+        assert(result.last_good_offset <= cut);
+        if (cut == 0 || cut == TINYKV_RECORD_HEADER_SIZE + 8 ||
+            cut == full_size)
+            assert(result.tail_truncated == 0); /* exact boundaries */
+        else if (cut < TINYKV_RECORD_HEADER_SIZE + 8)
+            assert(got.count == 0 && result.tail_truncated == 1);
+        else if (cut > TINYKV_RECORD_HEADER_SIZE + 8)
+            assert(got.count == 1);
+        if (result.tail_truncated)
+            assert(result.discarded_bytes == cut - result.last_good_offset);
+    }
+    assert(iterations == (int)full_size + 1);
+    close(fd);
+}
+
 int main(void)
 {
     assert(mkdtemp(temp_dir) != NULL);
@@ -260,6 +309,7 @@ int main(void)
     test_scan_empty_file_is_clean();
     test_scan_handles_records_larger_than_chunk();
     test_append_rejects_bad_input();
+    test_scan_survives_every_truncation();
     remove_temp_dir();
     puts("tinykv log: all tests passed");
     return 0;
