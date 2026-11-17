@@ -1025,6 +1025,39 @@ static void test_compaction_after_heavy_overwrites(void)
     tinykv_close(db);
 }
 
+static void test_reader_sees_writer_state_without_lock(void)
+{
+    char path[128];
+    tinykv_db *writer = NULL, *reader = NULL;
+    tinykv_options options;
+    void *value = NULL;
+    size_t value_length = 0;
+    db_path(path, sizeof(path), "reader.db");
+    assert(tinykv_open(path, NULL, &writer) == TINYKV_OK);
+    assert(tinykv_put(writer, "committed", 9, "yes", 3) == TINYKV_OK);
+
+    /* A reader may open while the writer holds the lock; it replays the
+     * log as it exists at open time. */
+    options = tinykv_options_default_for_test();
+    options.read_only = 1;
+    assert(tinykv_open(path, &options, &reader) == TINYKV_OK);
+    assert(tinykv_get(reader, "committed", 9, &value, &value_length) ==
+           TINYKV_OK);
+    assert(value_length == 3);
+    free(value);
+    /* Writes after the reader opened are invisible to its snapshot. */
+    assert(tinykv_put(writer, "later", 5, "value", 5) == TINYKV_OK);
+    assert(tinykv_get(reader, "later", 5, &value, &value_length) ==
+           TINYKV_ERR_NOT_FOUND);
+    /* Delete handling stays consistent for the reader. */
+    assert(tinykv_delete(reader, "committed", 9) == TINYKV_ERR_INVALID);
+    assert(tinykv_get(writer, "committed", 9, &value, &value_length) ==
+           TINYKV_OK);
+    free(value);
+    tinykv_close(reader);
+    tinykv_close(writer);
+}
+
 int main(void)
 {
     assert(mkdtemp(temp_dir) != NULL);
@@ -1056,6 +1089,7 @@ int main(void)
     test_max_length_boundaries();
     test_randomized_operations_match_reference();
     test_compaction_after_heavy_overwrites();
+    test_reader_sees_writer_state_without_lock();
     remove_temp_dir();
     puts("tinykv db: all tests passed");
     return 0;
