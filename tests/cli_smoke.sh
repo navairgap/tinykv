@@ -10,6 +10,8 @@ db="$work/demo.db"
 "$TOOL" put "$db" greeting hello
 "$TOOL" put "$db" user naveen
 test "$("$TOOL" get "$db" greeting)" = hello
+raw=$("$TOOL" get "$db" greeting --raw | od -An -c | tr -d ' \n')
+test "$raw" = 'hello' # --raw adds no trailing newline
 test "$("$TOOL" count "$db")" = 2
 test "$("$TOOL" list "$db")" = "$(printf 'greeting\thello\nuser\tnaveen')"
 "$TOOL" verify "$db"
