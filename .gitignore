@@ -6,4 +6,7 @@
 .video_agent/
 *.bak
 *.repair
+*.compact
 *.lock
+*.gcda
+*.gcno
