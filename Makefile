@@ -31,7 +31,7 @@ TESTS := test_record_codec test_index test_io test_log test_db test_golden
 TEST_BINS := $(patsubst %,$(BUILD)/%,$(TESTS))
 TOOL := $(BUILD)/tinykv
 
-.PHONY: all test fuzz bench install uninstall dist clean
+.PHONY: all test fuzz bench smoke install uninstall dist clean
 
 all: $(BUILD)/libtinykv.a $(TEST_BINS) $(TOOL) $(BUILD)/example_basic
 
@@ -67,6 +67,9 @@ fuzz: $(BUILD)/fuzz_record_codec
 
 bench: $(BUILD)/bench_tinykv
 	./$(BUILD)/bench_tinykv
+
+smoke: $(TOOL)
+	./tests/cli_smoke.sh
 
 install: all
 	install -d $(BINDIR) $(LIBDIR) $(INCDIR) $(PKGCFG)

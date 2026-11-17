@@ -79,22 +79,4 @@ jobs:
       - name: Build
         run: make all CC=gcc
       - name: Exercise the tinykv tool
-        run: |
-          set -euo pipefail
-          work=$(mktemp -d)
-          db="$work/demo.db"
-          trap 'rm -rf "$work"' EXIT
-          ./build/tinykv put "$db" greeting hello
-          ./build/tinykv put "$db" user naveen
-          test "$(./build/tinykv get "$db" greeting)" = hello
-          test "$(./build/tinykv count "$db")" = 2
-          test "$(./build/tinykv list "$db")" = "$(printf 'greeting\thello\nuser\tnaveen')"
-          ./build/tinykv verify "$db"
-          ./build/tinykv compact "$db"
-          ./build/tinykv verify "$db"
-          ./build/tinykv del "$db" user
-          if ./build/tinykv get "$db" user; then exit 1; fi
-          test "$(./build/tinykv count "$db")" = 1
-          printf 'k1\tv1\nk2\tv2\n' | ./build/tinykv batch "$db"
-          test "$(./build/tinykv count "$db")" = 3
-          ./build/tinykv version
+        run: make smoke CC=gcc
