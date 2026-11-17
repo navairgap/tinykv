@@ -1,6 +1,8 @@
-# TinyKV append-log record format (draft v1)
+# TinyKV append-log record format (v1)
 
-This document proposes a simple byte-level format for the first local append-only log. It is not yet an implemented or stable storage format.
+This document defines the TKV1 byte-level format, implemented in v1.0.0
+and stabilized for compatible releases. Incompatible changes will use a
+new magic/version, never a reinterpretation of TKV1 bytes.
 
 ## Header
 
