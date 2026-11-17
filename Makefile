@@ -6,10 +6,10 @@ CFLAGS ?= -std=c11 -O2 -Wall -Wextra -Werror -pedantic -D_POSIX_C_SOURCE=200809L
 CPPFLAGS ?= -Iinclude
 BUILD := build
 
-LIB_SRCS := src/record_codec.c src/tkv_index.c
+LIB_SRCS := src/record_codec.c src/tkv_index.c src/tkv_io.c
 LIB_OBJS := $(patsubst src/%.c,$(BUILD)/obj/%.o,$(LIB_SRCS))
 
-TESTS := test_record_codec test_index
+TESTS := test_record_codec test_index test_io
 TEST_BINS := $(patsubst %,$(BUILD)/%,$(TESTS))
 
 .PHONY: all test clean
