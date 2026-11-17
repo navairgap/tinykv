@@ -21,6 +21,8 @@ jobs:
         run: make test CC=${{ matrix.compiler }}
       - name: Run deterministic fuzz harness
         run: make fuzz CC=${{ matrix.compiler }}
+      - name: CLI smoke test
+        run: make smoke CC=${{ matrix.compiler }}
 
   sanitizers:
     name: asan + ubsan
