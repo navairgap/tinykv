@@ -12,10 +12,11 @@ LIB_OBJS := $(patsubst src/%.c,$(BUILD)/obj/%.o,$(LIB_SRCS))
 
 TESTS := test_record_codec test_index test_io test_log test_db
 TEST_BINS := $(patsubst %,$(BUILD)/%,$(TESTS))
+TOOL := $(BUILD)/tinykv
 
 .PHONY: all test clean
 
-all: $(BUILD)/libtinykv.a $(TEST_BINS)
+all: $(BUILD)/libtinykv.a $(TEST_BINS) $(TOOL)
 
 $(BUILD) $(BUILD)/obj:
 	mkdir -p $@
@@ -28,6 +29,9 @@ $(BUILD)/libtinykv.a: $(LIB_OBJS) | $(BUILD)
 
 $(BUILD)/%: tests/%.c $(BUILD)/libtinykv.a | $(BUILD)
 	$(CC) $(CFLAGS) $(CPPFLAGS) -Isrc $< $(BUILD)/libtinykv.a -o $@
+
+$(TOOL): src/tkv_tool.c $(BUILD)/libtinykv.a | $(BUILD)
+	$(CC) $(CFLAGS) $(CPPFLAGS) $< $(BUILD)/libtinykv.a -o $@
 
 test: $(TEST_BINS)
 	@for t in $(TEST_BINS); do echo "== $$t"; ./$$t || exit 1; done
