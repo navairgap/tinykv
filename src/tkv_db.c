@@ -37,6 +37,7 @@ const char *tinykv_status_string(tinykv_status status)
     case TINYKV_ERR_CORRUPT: return "database corruption";
     case TINYKV_ERR_LOCKED: return "database is locked by another process";
     case TINYKV_ERR_LIMIT: return "size limit exceeded";
+    case TINYKV_ERR_TORN_TAIL: return "torn tail (repair available)";
     }
     return "unknown status";
 }
@@ -492,6 +493,174 @@ tinykv_status tinykv_compact(tinykv_db *db)
     db->file_size = state.offset;
     db->compactions++;
     return TINYKV_OK;
+}
+
+static tinykv_status classify_log(const char *path, uint32_t max_key_length,
+                                  uint32_t max_value_length,
+                                  uint64_t *out_last_good,
+                                  uint64_t *out_total)
+{
+    tkv_log_limits limits;
+    tkv_log_scan_result scan;
+    tinykv_status status;
+    int fd;
+    limits.max_key_length = max_key_length;
+    limits.max_value_length = max_value_length;
+    fd = tkv_open_log(path, 1, NULL);
+    if (fd < 0) return TINYKV_ERR_IO;
+    if (tkv_log_scan(fd, &limits, NULL, NULL, &scan) != 0) {
+        close(fd);
+        return TINYKV_ERR_IO;
+    }
+    close(fd);
+    if (scan.stop_status == TINYKV_RECORD_OK)
+        status = TINYKV_OK;
+    else if (scan.stop_status == TINYKV_RECORD_TRUNCATED)
+        status = TINYKV_ERR_TORN_TAIL;
+    else
+        status = TINYKV_ERR_CORRUPT;
+    *out_last_good = scan.last_good_offset;
+    *out_total = scan.total_bytes;
+    return status;
+}
+
+static int copy_prefix(const char *from, const char *to, uint64_t length)
+{
+    static uint8_t buffer[65536];
+    int src = -1, dst = -1, result = -1;
+    do
+        src = open(from, O_RDONLY | O_CLOEXEC);
+    while (src < 0 && errno == EINTR);
+    if (src < 0) return -1;
+    do
+        dst = open(to, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+    while (dst < 0 && errno == EINTR);
+    if (dst < 0) goto out;
+    while (length != 0) {
+        size_t want = length < sizeof(buffer) ? (size_t)length : sizeof(buffer);
+        ssize_t got;
+        do
+            got = read(src, buffer, want);
+        while (got < 0 && errno == EINTR);
+        if (got <= 0) goto out;
+        if (tkv_write_all(dst, buffer, (size_t)got) != 0) goto out;
+        length -= (uint64_t)got;
+    }
+    result = tkv_fsync_file(dst);
+out:
+    if (dst >= 0) close(dst);
+    close(src);
+    return result;
+}
+
+tinykv_status tinykv_verify(const char *path, uint32_t max_key_length,
+                            uint32_t max_value_length,
+                            uint64_t *out_last_good_offset)
+{
+    uint64_t last_good = 0, total = 0;
+    tinykv_status status;
+    if (path == NULL || path[0] == '\0' || out_last_good_offset == NULL)
+        return TINYKV_ERR_INVALID;
+    if (max_key_length == 0 || max_value_length == 0)
+        return TINYKV_ERR_INVALID;
+    *out_last_good_offset = 0;
+    status = classify_log(path, max_key_length, max_value_length, &last_good,
+                          &total);
+    if (status == TINYKV_OK || status == TINYKV_ERR_TORN_TAIL ||
+        status == TINYKV_ERR_CORRUPT)
+        *out_last_good_offset = last_good;
+    return status;
+}
+
+tinykv_status tinykv_repair(const char *path, uint32_t max_key_length,
+                            uint32_t max_value_length, int dry_run,
+                            uint64_t *out_last_good_offset)
+{
+    char bak_path[TINYKV_PATH_MAX], repair_path[TINYKV_PATH_MAX],
+        lock_path[TINYKV_PATH_MAX];
+    uint64_t last_good = 0, total = 0;
+    tinykv_status status;
+    int lock_fd = -1;
+    int held_lock = 0;
+
+    if (path == NULL || path[0] == '\0' || out_last_good_offset == NULL)
+        return TINYKV_ERR_INVALID;
+    if (max_key_length == 0 || max_value_length == 0)
+        return TINYKV_ERR_INVALID;
+    if (strlen(path) >= sizeof(bak_path) - 32) return TINYKV_ERR_INVALID;
+    *out_last_good_offset = 0;
+
+    /* Repair must not race an open writer: take the same lock an open
+     * handle would hold, but never wait for it. */
+    if (tkv_sidecar_path(path, ".lock", lock_path, sizeof(lock_path)) == 0) {
+        do
+            lock_fd = open(lock_path, O_RDWR | O_CREAT | O_CLOEXEC, 0600);
+        while (lock_fd < 0 && errno == EINTR);
+        if (lock_fd >= 0 && tkv_lock_try(lock_fd, 1) == 0)
+            held_lock = 1;
+        else if (lock_fd >= 0) {
+            close(lock_fd);
+            return TINYKV_ERR_LOCKED;
+        }
+        /* A missing lock directory entry is fine: no writer is present. */
+    }
+
+    status = classify_log(path, max_key_length, max_value_length, &last_good,
+                          &total);
+    if (status == TINYKV_OK || status == TINYKV_ERR_IO) {
+        if (held_lock) tkv_unlock(lock_fd);
+        if (lock_fd >= 0) close(lock_fd);
+        *out_last_good_offset = last_good;
+        return status; /* already clean, nothing to do */
+    }
+    *out_last_good_offset = last_good;
+    if (dry_run) {
+        if (held_lock) tkv_unlock(lock_fd);
+        if (lock_fd >= 0) close(lock_fd);
+        return status;
+    }
+
+    if (tkv_sidecar_path(path, ".bak", bak_path, sizeof(bak_path)) != 0 ||
+        tkv_sidecar_path(path, ".repair", repair_path, sizeof(repair_path)) !=
+            0) {
+        status = TINYKV_ERR_INVALID;
+        goto out;
+    }
+    /* Preserve the original before touching anything (step 4). */
+    (void)unlink(bak_path);
+    if (tkv_copy_file(path, bak_path) != 0) {
+        status = TINYKV_ERR_IO;
+        goto out;
+    }
+    /* Write the retained prefix to a new file, then verify it. */
+    (void)unlink(repair_path);
+    if (copy_prefix(path, repair_path, last_good) != 0) {
+        (void)unlink(repair_path);
+        status = TINYKV_ERR_IO;
+        goto out;
+    }
+    {
+        uint64_t repaired_good = 0, repaired_total = 0;
+        tinykv_status check = classify_log(repair_path, max_key_length,
+                                           max_value_length, &repaired_good,
+                                           &repaired_total);
+        if (check != TINYKV_OK || repaired_total != last_good) {
+            (void)unlink(repair_path);
+            status = TINYKV_ERR_IO;
+            goto out;
+        }
+    }
+    /* Only replace the original after the new file is verified. */
+    if (tkv_rename_sync(repair_path, path) != 0) {
+        (void)unlink(repair_path);
+        status = TINYKV_ERR_IO;
+        goto out;
+    }
+    status = TINYKV_OK;
+out:
+    if (held_lock) tkv_unlock(lock_fd);
+    if (lock_fd >= 0) close(lock_fd);
+    return status;
 }
 
 tinykv_status tinykv_count(const tinykv_db *db, uint64_t *out_count)

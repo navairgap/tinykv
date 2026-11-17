@@ -31,7 +31,8 @@ typedef enum {
     TINYKV_ERR_NOT_FOUND, /* key not present */
     TINYKV_ERR_CORRUPT,   /* log corruption that is not a torn tail */
     TINYKV_ERR_LOCKED,    /* another process holds the write lock */
-    TINYKV_ERR_LIMIT      /* key/value exceeds configured limits */
+    TINYKV_ERR_LIMIT,     /* key/value exceeds configured limits */
+    TINYKV_ERR_TORN_TAIL  /* a torn tail exists; repair can reclaim it */
 } tinykv_status;
 
 typedef enum {
@@ -100,7 +101,9 @@ tinykv_status tinykv_iter_next(tinykv_iter *iter, const void **out_key,
 void tinykv_iter_free(tinykv_iter *iter);
 
 /* Validate a log without opening it for writes. *out_last_good_offset
- * reports where replay stopped: clean end, torn tail, or corruption. */
+ * reports where replay stopped: TINYKV_OK means a clean end,
+ * TINYKV_ERR_TORN_TAIL an incomplete final record, TINYKV_ERR_CORRUPT
+ * corruption that must not be skipped. */
 tinykv_status tinykv_verify(const char *path, uint32_t max_key_length,
                             uint32_t max_value_length,
                             uint64_t *out_last_good_offset);
@@ -108,7 +111,10 @@ tinykv_status tinykv_verify(const char *path, uint32_t max_key_length,
  * validate, write the retained prefix to "<path>.repair", fsync, verify
  * the repaired copy by replay, preserve the original as "<path>.bak",
  * then atomically replace. With dry_run set, nothing is modified and the
- * proposed truncation length is reported. */
+ * proposed truncation length is reported. Returns TINYKV_OK when the log
+ * is already clean; otherwise the classify status (TINYKV_ERR_TORN_TAIL
+ * or TINYKV_ERR_CORRUPT) with *out_last_good_offset as the proposed
+ * truncation length. */
 tinykv_status tinykv_repair(const char *path, uint32_t max_key_length,
                             uint32_t max_value_length, int dry_run,
                             uint64_t *out_last_good_offset);

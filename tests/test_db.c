@@ -546,6 +546,157 @@ static void test_compaction_empty_database(void)
     tinykv_close(db);
 }
 
+static uint64_t file_size_of(const char *path)
+{
+    struct stat st;
+    assert(stat(path, &st) == 0);
+    return (uint64_t)st.st_size;
+}
+
+static void test_verify_classifies_logs(void)
+{
+    char path[128];
+    tinykv_db *db = NULL;
+    int fd;
+    uint64_t good = 0;
+    db_path(path, sizeof(path), "verify.db");
+    assert(tinykv_open(path, NULL, &db) == TINYKV_OK);
+    assert(tinykv_put(db, "alpha", 5, "one", 3) == TINYKV_OK);
+    tinykv_close(db);
+    assert(tinykv_verify(path, 4096, 1048576, &good) == TINYKV_OK);
+    assert(good == 25 && good == file_size_of(path));
+
+    /* Torn tail: reported, not corruption. */
+    fd = tkv_open_log(path, 0, NULL);
+    assert(fd >= 0);
+    assert(lseek(fd, 0, SEEK_END) >= 0);
+    assert(tkv_write_all(fd, (const uint8_t[]){'T', 'K', 'V', '1', 1}, 5) == 0);
+    close(fd);
+    assert(tinykv_verify(path, 4096, 1048576, &good) == TINYKV_ERR_TORN_TAIL);
+    assert(good == 25);
+
+    /* Mid-file corruption: reported with the offending offset. */
+    {
+        int rw = tkv_open_log(path, 0, NULL);
+        uint8_t scratch = 0x7F;
+        assert(rw >= 0);
+        assert(pwrite(rw, &scratch, 1, 20) == 1);
+        close(rw);
+    }
+    assert(tinykv_verify(path, 4096, 1048576, &good) == TINYKV_ERR_CORRUPT);
+    assert(good == 0);
+    assert(tinykv_verify(NULL, 4096, 1048576, &good) == TINYKV_ERR_INVALID);
+    assert(tinykv_verify(path, 0, 1048576, &good) == TINYKV_ERR_INVALID);
+    assert(tinykv_verify("/does/not/exist.db", 4096, 1048576, &good) ==
+           TINYKV_ERR_IO);
+}
+
+static void test_repair_is_non_destructive(void)
+{
+    char path[128], bak[160], repair[160];
+    tinykv_db *db = NULL;
+    uint64_t good = 0;
+    int fd;
+    db_path(path, sizeof(path), "repair.db");
+    snprintf(bak, sizeof(bak), "%s.bak", path);
+    snprintf(repair, sizeof(repair), "%s.repair", path);
+    assert(tinykv_open(path, NULL, &db) == TINYKV_OK);
+    assert(tinykv_put(db, "alpha", 5, "one", 3) == TINYKV_OK);
+    assert(tinykv_put(db, "beta", 4, "two", 3) == TINYKV_OK);
+    tinykv_close(db);
+
+    /* A torn tail: 8 bytes of an interrupted record. */
+    fd = tkv_open_log(path, 0, NULL);
+    assert(fd >= 0);
+    assert(lseek(fd, 0, SEEK_END) >= 0);
+    assert(tkv_write_all(fd, (const uint8_t[]){'T', 'K', 'V', '1', 1, 0, 0, 0},
+                         8) == 0);
+    close(fd);
+
+    /* Dry run changes nothing and creates no sidecars. */
+    assert(tinykv_repair(path, 4096, 1048576, 1, &good) ==
+           TINYKV_ERR_TORN_TAIL);
+    assert(good == 49);
+    assert(file_size_of(path) == 57);
+    assert(access(bak, F_OK) == -1);
+    assert(access(repair, F_OK) == -1);
+
+    /* Real repair truncates to the last verified offset. */
+    assert(tinykv_repair(path, 4096, 1048576, 0, &good) == TINYKV_OK);
+    assert(good == 49);
+    assert(file_size_of(path) == 49);
+    assert(access(repair, F_OK) == -1);
+    assert(file_size_of(bak) == 57); /* original preserved */
+    /* The repaired file replays and both keys survive. */
+    assert(tinykv_open(path, NULL, &db) == TINYKV_OK);
+    {
+        void *value = NULL;
+        size_t value_length = 0;
+        assert(tinykv_get(db, "alpha", 5, &value, &value_length) == TINYKV_OK);
+        assert(value_length == 3);
+        free(value);
+        assert(tinykv_get(db, "beta", 4, &value, &value_length) == TINYKV_OK);
+        assert(value_length == 3);
+        free(value);
+    }
+    tinykv_close(db);
+    assert(unlink(bak) == 0);
+}
+
+static void test_repair_stops_at_midfile_corruption(void)
+{
+    char path[128], bak[132];
+    tinykv_db *db = NULL;
+    uint64_t good = 0;
+    int fd;
+    void *value = NULL;
+    size_t value_length = 0;
+    db_path(path, sizeof(path), "repair-corrupt.db");
+    snprintf(bak, sizeof(bak), "%s.bak", path);
+    assert(tinykv_open(path, NULL, &db) == TINYKV_OK);
+    assert(tinykv_put(db, "alpha", 5, "one", 3) == TINYKV_OK);
+    assert(tinykv_put(db, "beta", 4, "two", 3) == TINYKV_OK);
+    assert(tinykv_put(db, "gamma", 5, "three", 5) == TINYKV_OK);
+    tinykv_close(db);
+    /* Corrupt the second record's payload (offset 25+17 lands in beta). */
+    fd = tkv_open_log(path, 0, NULL);
+    assert(fd >= 0);
+    assert(pwrite(fd, (const uint8_t[]){0x7F}, 1, 42) == 1);
+    close(fd);
+
+    assert(tinykv_repair(path, 4096, 1048576, 0, &good) == TINYKV_OK);
+    assert(good == 25); /* everything after the corruption is dropped */
+    assert(file_size_of(bak) == 25 + 24 + 27); /* original preserved */
+    assert(tinykv_open(path, NULL, &db) == TINYKV_OK);
+    assert(tinykv_get(db, "alpha", 5, &value, &value_length) == TINYKV_OK);
+    assert(value_length == 3);
+    free(value);
+    assert(tinykv_get(db, "beta", 4, &value, &value_length) ==
+           TINYKV_ERR_NOT_FOUND);
+    assert(tinykv_get(db, "gamma", 5, &value, &value_length) ==
+           TINYKV_ERR_NOT_FOUND);
+    tinykv_close(db);
+    assert(unlink(bak) == 0);
+}
+
+static void test_repair_clean_log_and_lock(void)
+{
+    char path[128], bak[132];
+    tinykv_db *db = NULL;
+    uint64_t good = 0;
+    db_path(path, sizeof(path), "repair-clean.db");
+    snprintf(bak, sizeof(bak), "%s.bak", path);
+    assert(tinykv_open(path, NULL, &db) == TINYKV_OK);
+    assert(tinykv_put(db, "alpha", 5, "one", 3) == TINYKV_OK);
+    /* Repair must refuse while a writer holds the lock. */
+    assert(tinykv_repair(path, 4096, 1048576, 0, &good) == TINYKV_ERR_LOCKED);
+    tinykv_close(db);
+    /* A clean log repairs to a no-op without sidecars. */
+    assert(tinykv_repair(path, 4096, 1048576, 0, &good) == TINYKV_OK);
+    assert(good == 25);
+    assert(access(bak, F_OK) == -1);
+}
+
 int main(void)
 {
     assert(mkdtemp(temp_dir) != NULL);
@@ -566,6 +717,10 @@ int main(void)
     test_compaction_reclaims_dead_bytes();
     test_compaction_with_torn_tail();
     test_compaction_empty_database();
+    test_verify_classifies_logs();
+    test_repair_is_non_destructive();
+    test_repair_stops_at_midfile_corruption();
+    test_repair_clean_log_and_lock();
     remove_temp_dir();
     puts("tinykv db: all tests passed");
     return 0;
