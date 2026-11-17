@@ -3,6 +3,15 @@
 CC ?= cc
 AR ?= ar
 CFLAGS ?= -std=c11 -O2 -Wall -Wextra -Werror -pedantic -D_POSIX_C_SOURCE=200809L
+# make SAN=1 rebuilds everything under address+undefined sanitizers. A
+# CFLAGS override on the command line disables the toggle, so pass
+# sanitizer flags yourself in that case.
+SAN ?= 0
+ifeq ($(SAN),1)
+SAN_CFLAGS := -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all
+else
+SAN_CFLAGS :=
+endif
 CPPFLAGS ?= -Iinclude
 BUILD := build
 PREFIX ?= /usr/local
@@ -30,25 +39,25 @@ $(BUILD) $(BUILD)/obj:
 	mkdir -p $@
 
 $(BUILD)/obj/%.o: src/%.c | $(BUILD)/obj
-	$(CC) $(CFLAGS) $(CPPFLAGS) -c $< -o $@
+	$(CC) $(CFLAGS) $(SAN_CFLAGS) $(CPPFLAGS) -c $< -o $@
 
 $(BUILD)/libtinykv.a: $(LIB_OBJS) | $(BUILD)
 	$(AR) rcs $@ $^
 
 $(BUILD)/%: tests/%.c $(BUILD)/libtinykv.a | $(BUILD)
-	$(CC) $(CFLAGS) $(CPPFLAGS) -Isrc $< $(BUILD)/libtinykv.a -o $@
+	$(CC) $(CFLAGS) $(SAN_CFLAGS) $(CPPFLAGS) -Isrc $< $(BUILD)/libtinykv.a -o $@
 
 $(TOOL): src/tkv_tool.c $(BUILD)/libtinykv.a | $(BUILD)
-	$(CC) $(CFLAGS) $(CPPFLAGS) $< $(BUILD)/libtinykv.a -o $@
+	$(CC) $(CFLAGS) $(SAN_CFLAGS) $(CPPFLAGS) $< $(BUILD)/libtinykv.a -o $@
 
 $(BUILD)/example_basic: examples/basic.c $(BUILD)/libtinykv.a | $(BUILD)
-	$(CC) $(CFLAGS) $(CPPFLAGS) $< $(BUILD)/libtinykv.a -o $@
+	$(CC) $(CFLAGS) $(SAN_CFLAGS) $(CPPFLAGS) $< $(BUILD)/libtinykv.a -o $@
 
 $(BUILD)/fuzz_record_codec: fuzz/record_codec_fuzz.c $(BUILD)/libtinykv.a | $(BUILD)
-	$(CC) $(CFLAGS) $(CPPFLAGS) $< $(BUILD)/libtinykv.a -o $@
+	$(CC) $(CFLAGS) $(SAN_CFLAGS) $(CPPFLAGS) $< $(BUILD)/libtinykv.a -o $@
 
 $(BUILD)/bench_tinykv: bench/bench.c $(BUILD)/libtinykv.a | $(BUILD)
-	$(CC) $(CFLAGS) $(CPPFLAGS) $< $(BUILD)/libtinykv.a -o $@
+	$(CC) $(CFLAGS) $(SAN_CFLAGS) $(CPPFLAGS) $< $(BUILD)/libtinykv.a -o $@
 
 test: $(TEST_BINS)
 	@for t in $(TEST_BINS); do echo "== $$t"; ./$$t || exit 1; done
