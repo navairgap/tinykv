@@ -1,4 +1,6 @@
 #include "tkv_index.h"
+#include <limits.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -84,7 +86,11 @@ tkv_entry *tkv_index_find(const tkv_index *index, const uint8_t *key,
 static int index_grow(tkv_index *index)
 {
     tkv_entry *larger;
-    size_t larger_capacity = index->capacity * 2, i;
+    size_t larger_capacity, i;
+    /* Doubling past addressable memory would wrap the capacity and
+     * corrupt probing; fail cleanly long before that is reachable. */
+    if (index->capacity > SIZE_MAX / (2 * sizeof(tkv_entry))) return -1;
+    larger_capacity = index->capacity * 2;
     larger = (tkv_entry *)calloc(larger_capacity, sizeof(tkv_entry));
     if (larger == NULL) return -1;
     for (i = 0; i < index->capacity; ++i) {
