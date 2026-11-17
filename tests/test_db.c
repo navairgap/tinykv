@@ -1058,6 +1058,22 @@ static void test_reader_sees_writer_state_without_lock(void)
     tinykv_close(writer);
 }
 
+static void test_verify_and_repair_on_missing_file(void)
+{
+    char path[128], bak[160];
+    uint64_t good = 0;
+    db_path(path, sizeof(path), "missing.db");
+    snprintf(bak, sizeof(bak), "%s.bak", path);
+    assert(access(path, F_OK) == -1);
+    assert(tinykv_verify(path, 4096, 1048576, &good) == TINYKV_ERR_IO);
+    assert(good == 0);
+    /* Repair must neither create the file nor leave sidecars behind. */
+    assert(tinykv_repair(path, 4096, 1048576, 1, &good) == TINYKV_ERR_IO);
+    assert(tinykv_repair(path, 4096, 1048576, 0, &good) == TINYKV_ERR_IO);
+    assert(access(path, F_OK) == -1);
+    assert(access(bak, F_OK) == -1);
+}
+
 int main(void)
 {
     assert(mkdtemp(temp_dir) != NULL);
@@ -1090,6 +1106,7 @@ int main(void)
     test_randomized_operations_match_reference();
     test_compaction_after_heavy_overwrites();
     test_reader_sees_writer_state_without_lock();
+    test_verify_and_repair_on_missing_file();
     remove_temp_dir();
     puts("tinykv db: all tests passed");
     return 0;
