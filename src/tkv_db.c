@@ -69,6 +69,32 @@ static tinykv_options options_default(void)
     return defaults;
 }
 
+struct replay_state {
+    tinykv_db *db;
+    int oom;
+};
+
+/* Replay one validated record into the in-memory index. */
+static int replay_record(const tinykv_record_view *view, uint64_t offset,
+                         void *user)
+{
+    struct replay_state *state = (struct replay_state *)user;
+    tinykv_db *db = state->db;
+    if (view->type == TINYKV_RECORD_PUT) {
+        if (tkv_index_put(&db->index, view->key, view->key_length, offset,
+                          TINYKV_RECORD_HEADER_SIZE + view->key_length +
+                              view->value_length,
+                          view->value_length) != 0) {
+            state->oom = 1;
+            return 1;
+        }
+        return 0;
+    }
+    if (view->type == TINYKV_RECORD_DELETE)
+        tkv_index_remove(&db->index, view->key, view->key_length);
+    return 0;
+}
+
 static void db_free(tinykv_db *db)
 {
     if (db == NULL) return;
@@ -119,10 +145,30 @@ tinykv_status tinykv_open(const char *path, const tinykv_options *options,
 
     {
         tkv_log_limits limits;
+        struct replay_state replay;
         limits.max_key_length = effective.max_key_length;
         limits.max_value_length = effective.max_value_length;
-        if (tkv_log_scan(fd, &limits, NULL, NULL, &scan) != 0) {
+        db = (tinykv_db *)calloc(1, sizeof(*db));
+        if (db == NULL) {
+            status = TINYKV_ERR_NOMEM;
+            goto fail;
+        }
+        db->fd = fd;
+        db->lock_fd = lock_fd;
+        db->limits = limits;
+        db->options = effective;
+        if (tkv_index_init(&db->index) != 0) {
+            status = TINYKV_ERR_NOMEM;
+            goto fail;
+        }
+        replay.db = db;
+        replay.oom = 0;
+        if (tkv_log_scan(fd, &limits, replay_record, &replay, &scan) != 0) {
             status = TINYKV_ERR_IO;
+            goto fail;
+        }
+        if (replay.oom) {
+            status = TINYKV_ERR_NOMEM;
             goto fail;
         }
         if (scan.stop_status != TINYKV_RECORD_OK &&
@@ -130,23 +176,13 @@ tinykv_status tinykv_open(const char *path, const tinykv_options *options,
             status = TINYKV_ERR_CORRUPT;
             goto fail;
         }
+        db->file_size = scan.total_bytes;
+        db->torn_tail = scan.stop_status == TINYKV_RECORD_TRUNCATED;
+        db->tail_last_good = scan.last_good_offset;
     }
 
-    db = (tinykv_db *)calloc(1, sizeof(*db));
-    if (db == NULL) {
-        status = TINYKV_ERR_NOMEM;
-        goto fail;
-    }
     db->path = strdup(path);
-    db->fd = fd;
-    db->lock_fd = lock_fd;
-    db->limits.max_key_length = effective.max_key_length;
-    db->limits.max_value_length = effective.max_value_length;
-    db->options = effective;
-    db->file_size = scan.total_bytes;
-    db->torn_tail = scan.stop_status == TINYKV_RECORD_TRUNCATED;
-    db->tail_last_good = scan.last_good_offset;
-    if (db->path == NULL || tkv_index_init(&db->index) != 0) {
+    if (db->path == NULL) {
         status = TINYKV_ERR_NOMEM;
         goto fail;
     }
@@ -158,6 +194,13 @@ fail:
     if (fd >= 0) close(fd);
     db_free(db);
     return status;
+}
+
+tinykv_status tinykv_count(const tinykv_db *db, uint64_t *out_count)
+{
+    if (db == NULL || out_count == NULL) return TINYKV_ERR_INVALID;
+    *out_count = (uint64_t)tkv_index_count(&db->index);
+    return TINYKV_OK;
 }
 
 tinykv_status tinykv_close(tinykv_db *db)

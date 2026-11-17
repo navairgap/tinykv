@@ -1,5 +1,6 @@
 #include "tinykv/db.h"
 #include "tkv_io.h"
+#include "tkv_log.h"
 #include <assert.h>
 #include <dirent.h>
 #include <fcntl.h>
@@ -163,6 +164,73 @@ static void test_version_and_status_strings(void)
                   "unknown status") == 0);
 }
 
+static void test_replay_builds_index(void)
+{
+    char path[128];
+    tinykv_db *db = NULL;
+    tkv_log_limits limits = {4096, 1048576};
+    uint64_t offset, count = 0;
+    size_t length;
+    int fd;
+    db_path(path, sizeof(path), "replay.db");
+    fd = tkv_open_log(path, 0, NULL);
+    assert(fd >= 0);
+    /* A log with duplicates, tombstones, and empty values. */
+    assert(tkv_log_append(fd, TINYKV_RECORD_PUT, "alpha", 5, "one", 3,
+                          &limits, &offset, &length) == 0);
+    assert(tkv_log_append(fd, TINYKV_RECORD_PUT, "beta", 4, "", 0,
+                          &limits, &offset, &length) == 0);
+    assert(tkv_log_append(fd, TINYKV_RECORD_DELETE, "gone", 4, NULL, 0,
+                          &limits, &offset, &length) == 0);
+    assert(tkv_log_append(fd, TINYKV_RECORD_PUT, "alpha", 5, "two", 3,
+                          &limits, &offset, &length) == 0);
+    close(fd);
+
+    assert(tinykv_open(path, NULL, &db) == TINYKV_OK);
+    assert(tinykv_count(db, &count) == TINYKV_OK);
+    assert(count == 2); /* alpha and beta survive; gone was never live */
+    tinykv_close(db);
+
+    /* Deterministic replay: reopening yields the same state. */
+    assert(tinykv_open(path, NULL, &db) == TINYKV_OK);
+    assert(tinykv_count(db, &count) == TINYKV_OK);
+    assert(count == 2);
+    tinykv_close(db);
+}
+
+static void test_replay_over_limit_is_corruption(void)
+{
+    char path[128];
+    tinykv_db *db = NULL;
+    tkv_log_limits loose = {4096, 1048576};
+    uint64_t offset;
+    size_t length;
+    int fd;
+    db_path(path, sizeof(path), "limits.db");
+    fd = tkv_open_log(path, 0, NULL);
+    assert(fd >= 0);
+    assert(tkv_log_append(fd, TINYKV_RECORD_PUT, "big", 3, "", 0,
+                          &loose, &offset, &length) == 0);
+    /* Claim a 4 GiB value. The decoder checks configured limits before the
+     * checksum, so the record is rejected as an invalid length. */
+    {
+        uint8_t header[TINYKV_RECORD_HEADER_SIZE];
+        assert(tkv_pread_all(fd, header, sizeof(header), 0) == 0);
+        header[9] = 0xFF;
+        header[10] = 0xFF;
+        header[11] = 0xFF;
+        header[12] = 0xFF;
+        assert(pwrite(fd, header, sizeof(header), 0) == (ssize_t)sizeof(header));
+    }
+    close(fd);
+    /* Open with a 64 KiB value limit: a record claiming 4 GiB is invalid. */
+    {
+        tinykv_options options = tinykv_options_default_for_test();
+        options.max_value_length = 65536;
+        assert(tinykv_open(path, &options, &db) == TINYKV_ERR_CORRUPT);
+    }
+}
+
 int main(void)
 {
     assert(mkdtemp(temp_dir) != NULL);
@@ -172,6 +240,8 @@ int main(void)
     test_corrupt_log_fails_open();
     test_torn_tail_opens_cleanly();
     test_version_and_status_strings();
+    test_replay_builds_index();
+    test_replay_over_limit_is_corruption();
     remove_temp_dir();
     puts("tinykv db: all tests passed");
     return 0;
