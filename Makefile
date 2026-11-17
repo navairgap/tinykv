@@ -16,7 +16,7 @@ TOOL := $(BUILD)/tinykv
 
 .PHONY: all test clean
 
-all: $(BUILD)/libtinykv.a $(TEST_BINS) $(TOOL)
+all: $(BUILD)/libtinykv.a $(TEST_BINS) $(TOOL) $(BUILD)/example_basic
 
 $(BUILD) $(BUILD)/obj:
 	mkdir -p $@
@@ -31,6 +31,9 @@ $(BUILD)/%: tests/%.c $(BUILD)/libtinykv.a | $(BUILD)
 	$(CC) $(CFLAGS) $(CPPFLAGS) -Isrc $< $(BUILD)/libtinykv.a -o $@
 
 $(TOOL): src/tkv_tool.c $(BUILD)/libtinykv.a | $(BUILD)
+	$(CC) $(CFLAGS) $(CPPFLAGS) $< $(BUILD)/libtinykv.a -o $@
+
+$(BUILD)/example_basic: examples/basic.c $(BUILD)/libtinykv.a | $(BUILD)
 	$(CC) $(CFLAGS) $(CPPFLAGS) $< $(BUILD)/libtinykv.a -o $@
 
 test: $(TEST_BINS)
