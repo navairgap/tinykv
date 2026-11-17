@@ -23,5 +23,12 @@ fi
 test "$("$TOOL" count "$db")" = 1
 printf 'k1\tv1\nk2\tv2\n' | "$TOOL" batch "$db"
 test "$("$TOOL" count "$db")" = 3
+"$TOOL" copy "$db" "$work/snapshot.db"
+test "$("$TOOL" count "$work/snapshot.db")" = 3
+test "$("$TOOL" get "$work/snapshot.db" k1)" = v1
+if "$TOOL" copy "$db" "$work/snapshot.db"; then
+    echo "smoke: copy must refuse an existing destination" >&2
+    exit 1
+fi
 "$TOOL" version
 echo "tinykv cli smoke: all checks passed"

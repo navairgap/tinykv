@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 static void usage(FILE *stream)
 {
@@ -19,6 +20,7 @@ static void usage(FILE *stream)
           "  stats <db>               print storage statistics\n"
           "  compact <db>             rewrite the log, dropping dead bytes\n"
           "  batch <db>               import stdin lines of key<TAB>value\n"
+          "  copy <db> <new-db>       consistent snapshot into a new file\n"
           "  verify <db>              check the log for damage\n"
           "  repair <db> [--yes]      repair a damaged log (confirm with --yes)\n"
           "  version                  print the version\n",
@@ -253,6 +255,79 @@ static int cmd_batch(int argc, char **argv)
     return 0;
 }
 
+static int read_only_options(tinykv_options *options)
+{
+    options->max_key_length = 4096;
+    options->max_value_length = 1048576;
+    options->sync = TINYKV_SYNC_EVERY_WRITE;
+    options->create_if_missing = 0;
+    options->read_only = 1;
+    options->lock = 0;
+    return 0;
+}
+
+/* Copy every live key/value into a brand-new file: a consistent
+ * snapshot taken through the verified read path. */
+static int cmd_copy(int argc, char **argv)
+{
+    tinykv_db *source = NULL, *destination = NULL;
+    tinykv_status status;
+    tinykv_iter *iter = NULL;
+    tinykv_options source_options, destination_options;
+    const void *key = NULL, *value = NULL;
+    size_t klen = 0, vlen = 0;
+    unsigned long long copied = 0;
+    if (argc != 3) return usage(stderr), 1;
+    read_only_options(&source_options);
+    status = tinykv_open(argv[1], &source_options, &source);
+    if (status != TINYKV_OK) return report(argv[1], status), exit_code_for(status);
+    status = tinykv_iter_new(source, &iter);
+    if (status != TINYKV_OK) {
+        report(argv[1], status);
+        tinykv_close(source);
+        return exit_code_for(status);
+    }
+    destination_options = source_options;
+    destination_options.create_if_missing = 1;
+    destination_options.read_only = 0;
+    destination_options.lock = 1;
+    destination_options.sync = TINYKV_SYNC_ON_CLOSE;
+    {
+        struct stat st;
+        if (stat(argv[2], &st) == 0) {
+            fprintf(stderr, "tinykv: %s already exists; copy refuses to overwrite\n",
+                    argv[2]);
+            tinykv_iter_free(iter);
+            tinykv_close(source);
+            return 1;
+        }
+    }
+    status = tinykv_open(argv[2], &destination_options, &destination);
+    if (status != TINYKV_OK) {
+        report(argv[2], status);
+        tinykv_iter_free(iter);
+        tinykv_close(source);
+        return exit_code_for(status);
+    }
+    while (tinykv_iter_next(iter, &key, &klen, &value, &vlen) == TINYKV_OK &&
+           key != NULL) {
+        status = tinykv_put(destination, key, klen, value, vlen);
+        if (status != TINYKV_OK) {
+            report(argv[2], status);
+            tinykv_iter_free(iter);
+            tinykv_close(destination);
+            tinykv_close(source);
+            return exit_code_for(status);
+        }
+        copied++;
+    }
+    tinykv_iter_free(iter);
+    tinykv_close(destination);
+    tinykv_close(source);
+    printf("copied %llu key(s) from %s to %s\n", copied, argv[1], argv[2]);
+    return 0;
+}
+
 static int cmd_verify(int argc, char **argv)
 {
     uint64_t last_good = 0;
@@ -329,6 +404,7 @@ int main(int argc, char **argv)
     if (strcmp(argv[1], "stats") == 0) return cmd_stats(argc - 1, argv + 1);
     if (strcmp(argv[1], "compact") == 0) return cmd_compact(argc - 1, argv + 1);
     if (strcmp(argv[1], "batch") == 0) return cmd_batch(argc - 1, argv + 1);
+    if (strcmp(argv[1], "copy") == 0) return cmd_copy(argc - 1, argv + 1);
     if (strcmp(argv[1], "verify") == 0) return cmd_verify(argc - 1, argv + 1);
     if (strcmp(argv[1], "repair") == 0) return cmd_repair(argc - 1, argv + 1);
     fprintf(stderr, "tinykv: unknown command '%s'\n", argv[1]);
