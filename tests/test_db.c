@@ -822,6 +822,62 @@ static void test_accessors_report_path_and_size(void)
     tinykv_close(db);
 }
 
+static void test_max_length_boundaries(void)
+{
+    char path[128];
+    tinykv_db *db = NULL;
+    tinykv_options options;
+    static uint8_t max_key[64], max_value[8192];
+    /* Oversized probes need their own storage: a one-past-the-limit
+     * length must never read beyond a limit-sized buffer. */
+    static uint8_t oversized_key[65], oversized_value[8193];
+    void *value = NULL;
+    size_t value_length = 0;
+    unsigned i;
+
+    for (i = 0; i < sizeof(max_key); ++i) max_key[i] = (uint8_t)(i * 7 + 1);
+    for (i = 0; i < sizeof(max_value); ++i) max_value[i] = (uint8_t)(i ^ 0xA5);
+    for (i = 0; i < sizeof(oversized_key); ++i)
+        oversized_key[i] = (uint8_t)(i * 7 + 1);
+    for (i = 0; i < sizeof(oversized_value); ++i)
+        oversized_value[i] = (uint8_t)(i ^ 0xA5);
+
+    options = tinykv_options_default_for_test();
+    options.max_key_length = sizeof(max_key);
+    options.max_value_length = sizeof(max_value);
+    db_path(path, sizeof(path), "boundary.db");
+    assert(tinykv_open(path, &options, &db) == TINYKV_OK);
+    /* Exactly at the limit is accepted. */
+    assert(tinykv_put(db, max_key, sizeof(max_key), max_value,
+                      sizeof(max_value)) == TINYKV_OK);
+    assert(tinykv_get(db, max_key, sizeof(max_key), &value,
+                      &value_length) == TINYKV_OK);
+    assert(value_length == sizeof(max_value));
+    assert(memcmp(value, max_value, sizeof(max_value)) == 0);
+    free(value);
+    /* One byte over is refused. */
+    assert(tinykv_put(db, oversized_key, sizeof(oversized_key), "v", 1) ==
+           TINYKV_ERR_LIMIT);
+    assert(tinykv_put(db, "k", 1, oversized_value, sizeof(oversized_value)) ==
+           TINYKV_ERR_LIMIT);
+    /* The oversized key never entered the index. */
+    assert(tinykv_get(db, oversized_key, sizeof(oversized_key), &value,
+                      &value_length) == TINYKV_ERR_NOT_FOUND);
+    /* Compaction must survive a max-size record verbatim. */
+    assert(tinykv_compact(db) == TINYKV_OK);
+    assert(tinykv_get_into(db, max_key, sizeof(max_key), max_value,
+                           sizeof(max_value), &value_length) == TINYKV_OK);
+    assert(value_length == sizeof(max_value));
+    tinykv_close(db);
+    /* And replays back after a restart. */
+    assert(tinykv_open(path, &options, &db) == TINYKV_OK);
+    assert(tinykv_get(db, max_key, sizeof(max_key), &value,
+                      &value_length) == TINYKV_OK);
+    assert(value_length == sizeof(max_value));
+    free(value);
+    tinykv_close(db);
+}
+
 int main(void)
 {
     assert(mkdtemp(temp_dir) != NULL);
@@ -850,6 +906,7 @@ int main(void)
     test_iteration_is_sorted_and_skips_deletes();
     test_iteration_empty_and_fresh_values();
     test_accessors_report_path_and_size();
+    test_max_length_boundaries();
     remove_temp_dir();
     puts("tinykv db: all tests passed");
     return 0;
