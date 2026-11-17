@@ -6,11 +6,99 @@ on:
   pull_request:
 
 jobs:
-  codec-tests:
+  build-and-test:
+    name: build & test (${{ matrix.compiler }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [gcc, clang]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build with strict warnings
+        run: make all CC=${{ matrix.compiler }}
+      - name: Run all tests
+        run: make test CC=${{ matrix.compiler }}
+      - name: Run deterministic fuzz harness
+        run: make fuzz CC=${{ matrix.compiler }}
+
+  sanitizers:
+    name: asan + ubsan
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Compile with strict warnings
-        run: cc -std=c11 -Wall -Wextra -Werror -Iinclude src/record_codec.c tests/test_record_codec.c -o /tmp/tinykv-record-tests
-      - name: Run record codec tests
-        run: /tmp/tinykv-record-tests
+      - name: Build with sanitizers
+        run: >
+          make all CC=gcc
+          CFLAGS="-std=c11 -O1 -g -Wall -Wextra -Werror -pedantic
+          -D_POSIX_C_SOURCE=200809L -fsanitize=address,undefined
+          -fno-sanitize-recover=all"
+      - name: Run tests under sanitizers
+        run: make test CC=gcc
+        env:
+          ASAN_OPTIONS: detect_leaks=1:strict_string_checks=1
+          UBSAN_OPTIONS: print_stacktrace=1
+      - name: Run fuzz harness under sanitizers
+        run: make fuzz CC=gcc
+
+  valgrind:
+    name: valgrind
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install valgrind
+        run: sudo apt-get update && sudo apt-get install -y valgrind
+      - name: Build
+        run: make all CC=gcc
+      - name: Run tests under valgrind
+        run: >
+          valgrind --leak-check=full --show-leak-kinds=definite
+          --errors-for-leak-kinds=definite --error-exitcode=99
+          build/test_record_codec
+          build/test_index
+          build/test_io
+          build/test_log
+          build/test_db
+          build/test_golden
+
+  libfuzzer:
+    name: libfuzzer smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile fuzz target with libFuzzer
+        run: >
+          clang -std=c11 -O1 -g -fsanitize=fuzzer,address
+          -DTINYKV_HAVE_LIBFUZZER -Iinclude
+          src/record_codec.c fuzz/record_codec_fuzz.c
+          -o /tmp/record-fuzz
+      - name: Fuzz the codec for 60 seconds
+        run: /tmp/record-fuzz -max_total_time=60 -rss_limit_mb=2048
+
+  tool-smoke:
+    name: cli smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: make all CC=gcc
+      - name: Exercise the tinykv tool
+        run: |
+          set -euo pipefail
+          work=$(mktemp -d)
+          db="$work/demo.db"
+          trap 'rm -rf "$work"' EXIT
+          ./build/tinykv put "$db" greeting hello
+          ./build/tinykv put "$db" user naveen
+          test "$(./build/tinykv get "$db" greeting)" = hello
+          test "$(./build/tinykv count "$db")" = 2
+          test "$(./build/tinykv list "$db")" = "$(printf 'greeting\thello\nuser\tnaveen')"
+          ./build/tinykv verify "$db"
+          ./build/tinykv compact "$db"
+          ./build/tinykv verify "$db"
+          ./build/tinykv del "$db" user
+          if ./build/tinykv get "$db" user; then exit 1; fi
+          test "$(./build/tinykv count "$db")" = 1
+          printf 'k1\tv1\nk2\tv2\n' | ./build/tinykv batch "$db"
+          test "$(./build/tinykv count "$db")" = 3
+          ./build/tinykv version
