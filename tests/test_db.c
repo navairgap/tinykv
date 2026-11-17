@@ -878,6 +878,100 @@ static void test_max_length_boundaries(void)
     tinykv_close(db);
 }
 
+static void test_randomized_operations_match_reference(void)
+{
+    /* Deterministic model check: a fixed table of slots mirrors what the
+     * database should contain; every put/delete/get is verified against
+     * it, with a restart in the middle to exercise replay. */
+    char path[128];
+    tinykv_db *db = NULL;
+    enum { SLOTS = 40, OPS = 4000, MAX_VALUE = 64 };
+    char keys[SLOTS][24];
+    char values[SLOTS][MAX_VALUE];
+    size_t key_lengths[SLOTS], value_lengths[SLOTS];
+    int present[SLOTS];
+    uint32_t seed = 0xC0FFEE11;
+    void *got = NULL;
+    size_t got_length = 0;
+    int op, i;
+    db_path(path, sizeof(path), "model.db");
+    for (i = 0; i < SLOTS; ++i) {
+        snprintf(keys[i], sizeof(keys[i]), "slot-%02d", i);
+        key_lengths[i] = strlen(keys[i]);
+        present[i] = 0;
+    }
+    assert(tinykv_open(path, NULL, &db) == TINYKV_OK);
+    for (op = 0; op < OPS; ++op) {
+        seed = seed * 1664525u + 1013904223u;
+        i = (int)((seed >> 8) % SLOTS);
+        if (seed & 1) { /* put: new random value */
+            size_t vlen = (seed >> 16) % (MAX_VALUE + 1);
+            size_t j;
+            for (j = 0; j < vlen; ++j)
+                values[i][j] = (char)(seed >> (j % 17));
+            assert(tinykv_put(db, keys[i], key_lengths[i], values[i],
+                              vlen) == TINYKV_OK);
+            value_lengths[i] = vlen;
+            present[i] = 1;
+        } else if (present[i]) {
+            assert(tinykv_delete(db, keys[i], key_lengths[i]) == TINYKV_OK);
+            present[i] = 0;
+        } else {
+            assert(tinykv_delete(db, keys[i], key_lengths[i]) ==
+                   TINYKV_ERR_NOT_FOUND);
+        }
+        if (op % 7 == 0) { /* spot-check one random slot */
+            int probe = (int)((seed >> 20) % SLOTS);
+            if (present[probe]) {
+                assert(tinykv_get(db, keys[probe], key_lengths[probe], &got,
+                                  &got_length) == TINYKV_OK);
+                assert(got_length == value_lengths[probe]);
+                assert(got_length == 0 ||
+                       memcmp(got, values[probe], got_length) == 0);
+                free(got);
+                got = NULL;
+            } else {
+                assert(tinykv_get(db, keys[probe], key_lengths[probe], &got,
+                                  &got_length) == TINYKV_ERR_NOT_FOUND);
+            }
+        }
+        if (op == OPS / 2) { /* restart: replay must reproduce the model */
+            tinykv_close(db);
+            assert(tinykv_open(path, NULL, &db) == TINYKV_OK);
+            for (i = 0; i < SLOTS; ++i) {
+                if (present[i]) {
+                    assert(tinykv_get(db, keys[i], key_lengths[i], &got,
+                                      &got_length) == TINYKV_OK);
+                    assert(got_length == value_lengths[i]);
+                    assert(got_length == 0 ||
+                           memcmp(got, values[i], got_length) == 0);
+                    free(got);
+                    got = NULL;
+                } else {
+                    assert(tinykv_get(db, keys[i], key_lengths[i], &got,
+                                      &got_length) == TINYKV_ERR_NOT_FOUND);
+                }
+            }
+        }
+    }
+    /* Full comparison at the end, then compaction must preserve it. */
+    assert(tinykv_compact(db) == TINYKV_OK);
+    for (i = 0; i < SLOTS; ++i) {
+        if (present[i]) {
+            assert(tinykv_get(db, keys[i], key_lengths[i], &got,
+                              &got_length) == TINYKV_OK);
+            assert(got_length == value_lengths[i]);
+            assert(got_length == 0 || memcmp(got, values[i], got_length) == 0);
+            free(got);
+            got = NULL;
+        } else {
+            assert(tinykv_get(db, keys[i], key_lengths[i], &got,
+                              &got_length) == TINYKV_ERR_NOT_FOUND);
+        }
+    }
+    tinykv_close(db);
+}
+
 int main(void)
 {
     assert(mkdtemp(temp_dir) != NULL);
@@ -907,6 +1001,7 @@ int main(void)
     test_iteration_empty_and_fresh_values();
     test_accessors_report_path_and_size();
     test_max_length_boundaries();
+    test_randomized_operations_match_reference();
     remove_temp_dir();
     puts("tinykv db: all tests passed");
     return 0;
