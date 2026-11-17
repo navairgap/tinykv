@@ -5,6 +5,14 @@ AR ?= ar
 CFLAGS ?= -std=c11 -O2 -Wall -Wextra -Werror -pedantic -D_POSIX_C_SOURCE=200809L
 CPPFLAGS ?= -Iinclude
 BUILD := build
+PREFIX ?= /usr/local
+BINDIR := $(DESTDIR)$(PREFIX)/bin
+LIBDIR := $(DESTDIR)$(PREFIX)/lib
+INCDIR := $(DESTDIR)$(PREFIX)/include/tinykv
+PKGCFG := $(DESTDIR)$(PREFIX)/share/pkgconfig
+VERSION ?= 1.0.0
+
+PUBLIC_HEADERS := include/tinykv/record.h include/tinykv/db.h
 
 LIB_SRCS := src/record_codec.c src/tkv_index.c src/tkv_io.c src/tkv_log.c \
             src/tkv_db.c
@@ -14,7 +22,7 @@ TESTS := test_record_codec test_index test_io test_log test_db
 TEST_BINS := $(patsubst %,$(BUILD)/%,$(TESTS))
 TOOL := $(BUILD)/tinykv
 
-.PHONY: all test fuzz bench clean
+.PHONY: all test fuzz bench install uninstall dist clean
 
 all: $(BUILD)/libtinykv.a $(TEST_BINS) $(TOOL) $(BUILD)/example_basic
 
@@ -50,6 +58,23 @@ fuzz: $(BUILD)/fuzz_record_codec
 
 bench: $(BUILD)/bench_tinykv
 	./$(BUILD)/bench_tinykv
+
+install: all
+	install -d $(BINDIR) $(LIBDIR) $(INCDIR) $(PKGCFG)
+	install -m 0755 $(TOOL) $(BINDIR)/tinykv
+	install -m 0644 $(BUILD)/libtinykv.a $(LIBDIR)/libtinykv.a
+	install -m 0644 $(PUBLIC_HEADERS) $(INCDIR)/
+	sed -e 's|@PREFIX@|$(PREFIX)|g' -e 's|@VERSION@|$(VERSION)|g' \
+	    tinykv.pc.in > $(PKGCFG)/tinykv.pc
+
+uninstall:
+	rm -f $(BINDIR)/tinykv $(LIBDIR)/libtinykv.a \
+	      $(PKGCFG)/tinykv.pc
+	rmdir $(INCDIR) 2>/dev/null || true
+
+dist:
+	git archive --format=tar.gz --prefix=tinykv-$(VERSION)/ \
+	    -o tinykv-$(VERSION).tar.gz HEAD
 
 clean:
 	rm -rf $(BUILD)
