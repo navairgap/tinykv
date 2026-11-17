@@ -14,7 +14,7 @@ TESTS := test_record_codec test_index test_io test_log test_db
 TEST_BINS := $(patsubst %,$(BUILD)/%,$(TESTS))
 TOOL := $(BUILD)/tinykv
 
-.PHONY: all test fuzz clean
+.PHONY: all test fuzz bench clean
 
 all: $(BUILD)/libtinykv.a $(TEST_BINS) $(TOOL) $(BUILD)/example_basic
 
@@ -39,11 +39,17 @@ $(BUILD)/example_basic: examples/basic.c $(BUILD)/libtinykv.a | $(BUILD)
 $(BUILD)/fuzz_record_codec: fuzz/record_codec_fuzz.c $(BUILD)/libtinykv.a | $(BUILD)
 	$(CC) $(CFLAGS) $(CPPFLAGS) $< $(BUILD)/libtinykv.a -o $@
 
+$(BUILD)/bench_tinykv: bench/bench.c $(BUILD)/libtinykv.a | $(BUILD)
+	$(CC) $(CFLAGS) $(CPPFLAGS) $< $(BUILD)/libtinykv.a -o $@
+
 test: $(TEST_BINS)
 	@for t in $(TEST_BINS); do echo "== $$t"; ./$$t || exit 1; done
 
 fuzz: $(BUILD)/fuzz_record_codec
 	./$(BUILD)/fuzz_record_codec
+
+bench: $(BUILD)/bench_tinykv
+	./$(BUILD)/bench_tinykv
 
 clean:
 	rm -rf $(BUILD)
