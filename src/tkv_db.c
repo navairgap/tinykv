@@ -352,7 +352,7 @@ struct bytes_state {
     uint64_t total;
 };
 
-static void add_record_bytes(const tkv_entry *entry, void *user)
+static void add_record_bytes(tkv_entry *entry, void *user)
 {
     struct bytes_state *state = (struct bytes_state *)user;
     state->total += entry->record_length;
@@ -375,6 +375,122 @@ tinykv_status tinykv_get_stats(const tinykv_db *db, tinykv_stats *out_stats)
     out_stats->puts = db->puts;
     out_stats->deletes = db->deletes;
     out_stats->compactions = db->compactions;
+    return TINYKV_OK;
+}
+
+struct compact_entry {
+    tkv_entry *entry;
+    uint64_t new_offset;
+};
+
+struct compact_state {
+    tinykv_db *db;
+    int tmp_fd;
+    uint64_t offset;
+    int failed;
+    struct compact_entry *list;
+    size_t count, capacity;
+};
+
+/* Copy one live record to the compaction file, remembering its new
+ * offset. Index updates are deferred until the swap succeeds so a
+ * failure leaves both the original file and the index untouched. */
+static void compact_visit(tkv_entry *entry, void *user)
+{
+    struct compact_state *state = (struct compact_state *)user;
+    uint8_t *record;
+    tinykv_record_view view;
+    size_t consumed = 0;
+
+    if (state->failed) return;
+    record = (uint8_t *)malloc(entry->record_length);
+    if (record == NULL) {
+        state->failed = 1;
+        return;
+    }
+    if (tkv_pread_all(state->db->fd, record, entry->record_length,
+                      entry->offset) != 0 ||
+        tinykv_record_decode(record, entry->record_length,
+                             state->db->limits.max_key_length,
+                             state->db->limits.max_value_length, &view,
+                             &consumed) != TINYKV_RECORD_OK ||
+        tkv_write_all(state->tmp_fd, record, entry->record_length) != 0) {
+        free(record);
+        state->failed = 1;
+        return;
+    }
+    free(record);
+    if (state->count == state->capacity) {
+        size_t larger = state->capacity ? state->capacity * 2 : 64;
+        struct compact_entry *grown =
+            (struct compact_entry *)realloc(state->list,
+                                            larger * sizeof(*grown));
+        if (grown == NULL) {
+            state->failed = 1;
+            return;
+        }
+        state->list = grown;
+        state->capacity = larger;
+    }
+    state->list[state->count].entry = entry;
+    state->list[state->count].new_offset = state->offset;
+    state->count++;
+    state->offset += entry->record_length;
+}
+
+tinykv_status tinykv_compact(tinykv_db *db)
+{
+    char tmp_path[TINYKV_PATH_MAX];
+    struct compact_state state;
+    tinykv_status status;
+    int tmp_fd = -1;
+    size_t i;
+
+    if (db == NULL || db->fd < 0) return TINYKV_ERR_INVALID;
+    if (db->options.read_only) return TINYKV_ERR_INVALID;
+    if (tkv_sidecar_path(db->path, ".compact", tmp_path, sizeof(tmp_path)) !=
+        0)
+        return TINYKV_ERR_INVALID;
+
+    status = reclaim_torn_tail(db);
+    if (status != TINYKV_OK) return status;
+
+    memset(&state, 0, sizeof(state));
+    state.db = db;
+    (void)unlink(tmp_path); /* a stale temp from an interrupted compaction */
+    do
+        tmp_fd = open(tmp_path, O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+    while (tmp_fd < 0 && errno == EINTR);
+    if (tmp_fd < 0) return TINYKV_ERR_IO;
+    state.tmp_fd = tmp_fd;
+
+    tkv_index_foreach_mutable(&db->index, compact_visit, &state);
+    if (state.failed || tkv_fsync_file(tmp_fd) != 0) {
+        close(tmp_fd);
+        (void)unlink(tmp_path);
+        free(state.list);
+        return TINYKV_ERR_IO;
+    }
+    close(tmp_fd);
+    /* Atomic swap: the compacted file replaces the log only after the
+     * replacement itself is synced, per docs/repair-mode-safety.md. */
+    if (tkv_rename_sync(tmp_path, db->path) != 0) {
+        (void)unlink(tmp_path);
+        free(state.list);
+        return TINYKV_ERR_IO;
+    }
+    close(db->fd);
+    db->fd = tkv_open_log(db->path, 0, NULL);
+    if (db->fd < 0) {
+        free(state.list);
+        return TINYKV_ERR_IO;
+    }
+    /* Only now repoint the index at the compacted layout. */
+    for (i = 0; i < state.count; ++i)
+        state.list[i].entry->offset = state.list[i].new_offset;
+    free(state.list);
+    db->file_size = state.offset;
+    db->compactions++;
     return TINYKV_OK;
 }
 

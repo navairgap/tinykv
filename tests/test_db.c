@@ -459,6 +459,93 @@ static void test_stats_track_activity(void)
     tinykv_close(db);
 }
 
+static void test_compaction_reclaims_dead_bytes(void)
+{
+    char path[128];
+    tinykv_db *db = NULL;
+    tinykv_stats stats;
+    void *value = NULL;
+    size_t value_length = 0;
+    db_path(path, sizeof(path), "compact.db");
+    assert(tinykv_open(path, NULL, &db) == TINYKV_OK);
+    assert(tinykv_put(db, "alpha", 5, "one", 3) == TINYKV_OK);
+    assert(tinykv_put(db, "beta", 4, "two", 3) == TINYKV_OK);
+    assert(tinykv_put(db, "alpha", 5, "uno", 3) == TINYKV_OK);
+    assert(tinykv_put(db, "gamma", 5, "three", 5) == TINYKV_OK);
+    assert(tinykv_delete(db, "beta", 4) == TINYKV_OK);
+    assert(tinykv_get_stats(db, &stats) == TINYKV_OK);
+    assert(stats.dead_bytes > 0);
+
+    assert(tinykv_compact(db) == TINYKV_OK);
+    assert(tinykv_get_stats(db, &stats) == TINYKV_OK);
+    assert(stats.records == 2);
+    assert(stats.live_bytes == (17 + 5 + 3) + (17 + 5 + 5));
+    assert(stats.dead_bytes == 0);
+    assert(stats.file_size == stats.live_bytes);
+    assert(stats.compactions == 1);
+    /* Values must still read correctly through the new offsets. */
+    assert(tinykv_get(db, "alpha", 5, &value, &value_length) == TINYKV_OK);
+    assert(value_length == 3 && memcmp(value, "uno", 3) == 0);
+    free(value);
+    assert(tinykv_get(db, "gamma", 5, &value, &value_length) == TINYKV_OK);
+    assert(value_length == 5 && memcmp(value, "three", 5) == 0);
+    free(value);
+    assert(tinykv_get(db, "beta", 4, &value, &value_length) ==
+           TINYKV_ERR_NOT_FOUND);
+    /* Writes keep working after the swap. */
+    assert(tinykv_put(db, "delta", 5, "four", 4) == TINYKV_OK);
+    tinykv_close(db);
+
+    /* The compacted file replays to the same state. */
+    assert(tinykv_open(path, NULL, &db) == TINYKV_OK);
+    assert(tinykv_get(db, "alpha", 5, &value, &value_length) == TINYKV_OK);
+    assert(value_length == 3);
+    free(value);
+    assert(tinykv_get(db, "delta", 5, &value, &value_length) == TINYKV_OK);
+    assert(value_length == 4);
+    free(value);
+    tinykv_close(db);
+}
+
+static void test_compaction_with_torn_tail(void)
+{
+    char path[128];
+    tinykv_db *db = NULL;
+    tinykv_stats stats;
+    int fd;
+    uint8_t partial[5] = {'T', 'K', 'V', '1', TINYKV_RECORD_PUT};
+    db_path(path, sizeof(path), "compact-torn.db");
+    assert(tinykv_open(path, NULL, &db) == TINYKV_OK);
+    assert(tinykv_put(db, "alpha", 5, "one", 3) == TINYKV_OK);
+    tinykv_close(db);
+    fd = tkv_open_log(path, 0, NULL);
+    assert(fd >= 0);
+    assert(lseek(fd, 0, SEEK_END) >= 0);
+    assert(tkv_write_all(fd, partial, sizeof(partial)) == 0);
+    close(fd);
+
+    assert(tinykv_open(path, NULL, &db) == TINYKV_OK);
+    /* Compaction is a write operation, so it reclaims the tail too. */
+    assert(tinykv_compact(db) == TINYKV_OK);
+    assert(tinykv_get_stats(db, &stats) == TINYKV_OK);
+    assert(stats.discarded_bytes == 0 && stats.dead_bytes == 0);
+    assert(stats.file_size == 25);
+    tinykv_close(db);
+}
+
+static void test_compaction_empty_database(void)
+{
+    char path[128];
+    tinykv_db *db = NULL;
+    tinykv_stats stats;
+    db_path(path, sizeof(path), "compact-empty.db");
+    assert(tinykv_open(path, NULL, &db) == TINYKV_OK);
+    assert(tinykv_compact(db) == TINYKV_OK);
+    assert(tinykv_get_stats(db, &stats) == TINYKV_OK);
+    assert(stats.records == 0 && stats.file_size == 0 && stats.dead_bytes == 0);
+    tinykv_close(db);
+}
+
 int main(void)
 {
     assert(mkdtemp(temp_dir) != NULL);
@@ -476,6 +563,9 @@ int main(void)
     test_write_reclaims_torn_tail();
     test_restart_persistence();
     test_stats_track_activity();
+    test_compaction_reclaims_dead_bytes();
+    test_compaction_with_torn_tail();
+    test_compaction_empty_database();
     remove_temp_dir();
     puts("tinykv db: all tests passed");
     return 0;

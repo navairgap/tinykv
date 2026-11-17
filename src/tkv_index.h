@@ -28,7 +28,7 @@ typedef struct tkv_index {
     size_t used; /* LIVE + TOMBSTONE slots */
 } tkv_index;
 
-typedef void (*tkv_index_visitor)(const tkv_entry *entry, void *user);
+typedef void (*tkv_index_visitor)(tkv_entry *entry, void *user);
 
 uint32_t tkv_index_hash(const uint8_t *key, size_t key_length);
 int tkv_index_init(tkv_index *index);
@@ -46,4 +46,6 @@ int tkv_index_put(tkv_index *index, const uint8_t *key, size_t key_length,
 int tkv_index_remove(tkv_index *index, const uint8_t *key, size_t key_length);
 void tkv_index_foreach(const tkv_index *index, tkv_index_visitor visit,
                        void *user);
+void tkv_index_foreach_mutable(tkv_index *index, tkv_index_visitor visit,
+                               void *user);
 #endif

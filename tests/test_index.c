@@ -104,7 +104,7 @@ struct visit_state {
     uint64_t max_offset;
 };
 
-static void visit_counter(const tkv_entry *entry, void *user)
+static void visit_counter(tkv_entry *entry, void *user)
 {
     struct visit_state *state = (struct visit_state *)user;
     state->seen++;

@@ -178,3 +178,15 @@ void tkv_index_foreach(const tkv_index *index, tkv_index_visitor visit,
         if (index->buckets[i].state == TKV_INDEX_LIVE)
             visit(&index->buckets[i], user);
 }
+
+/* Non-const variant: lets callers update entry metadata in place (for
+ * example compaction rewriting offsets). Never rehashes. */
+void tkv_index_foreach_mutable(tkv_index *index, tkv_index_visitor visit,
+                               void *user)
+{
+    size_t i;
+    if (index == NULL || index->buckets == NULL || visit == NULL) return;
+    for (i = 0; i < index->capacity; ++i)
+        if (index->buckets[i].state == TKV_INDEX_LIVE)
+            visit(&index->buckets[i], user);
+}
