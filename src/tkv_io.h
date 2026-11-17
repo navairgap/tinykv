@@ -25,6 +25,8 @@ int tkv_lock_try(int fd, int exclusive);
 void tkv_unlock(int fd);
 /* rename(2) followed by an fsync of the destination directory. */
 int tkv_rename_sync(const char *from, const char *to);
+/* Copy with a durable destination: the new file is fsynced before
+ * success is reported. */
 int tkv_copy_file(const char *from, const char *to);
 int tkv_truncate_file(int fd, uint64_t length);
 /* dst must hold strlen(path) + strlen(suffix) + 1 bytes. */

@@ -145,6 +145,9 @@ int tkv_copy_file(const char *from, const char *to)
         if (got == 0) break;
         if (tkv_write_all(dst, buffer, (size_t)got) != 0) goto out;
     }
+    /* The copy is a durability artifact (backups, repair presets), so
+     * sync it before reporting success. */
+    if (tkv_fsync_file(dst) != 0) goto out;
     result = 0;
 out:
     if (dst >= 0) close(dst);
