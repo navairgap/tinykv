@@ -17,7 +17,7 @@ static void usage(FILE *stream)
           "  del <db> <key>           delete a key\n"
           "  list <db>                print key<TAB>value for every key\n"
           "  count <db>               print the number of live keys\n"
-          "  stats <db>               print storage statistics\n"
+          "  stats <db> [--json]      print storage statistics\n"
           "  compact <db>             rewrite the log, dropping dead bytes\n"
           "  batch <db>               import stdin lines of key<TAB>value\n"
           "  copy <db> <new-db>       consistent snapshot into a new file\n"
@@ -44,6 +44,16 @@ static void report(const char *database, tinykv_status status)
 {
     fprintf(stderr, "tinykv: %s: %s\n", database,
             tinykv_status_string(status));
+}
+
+static void read_only_options(tinykv_options *options)
+{
+    options->max_key_length = 4096;
+    options->max_value_length = 1048576;
+    options->sync = TINYKV_SYNC_EVERY_WRITE;
+    options->create_if_missing = 0;
+    options->read_only = 1;
+    options->lock = 0;
 }
 
 static int cmd_put(int argc, char **argv)
@@ -159,34 +169,58 @@ static int cmd_stats(int argc, char **argv)
     tinykv_status status;
     tinykv_stats stats;
     tinykv_options options;
-    if (argc != 2) return usage(stderr), 1;
-    options.max_key_length = 4096;
-    options.max_value_length = 1048576;
-    options.sync = TINYKV_SYNC_EVERY_WRITE;
-    options.create_if_missing = 0;
-    options.read_only = 1;
-    options.lock = 0;
-    status = tinykv_open(argv[1], &options, &db);
-    if (status != TINYKV_OK) return report(argv[1], status), exit_code_for(status);
+    int as_json = 0;
+    const char *database;
+    if (argc < 2 || argc > 3) return usage(stderr), 1;
+    database = argv[1];
+    if (argc == 3) {
+        if (strcmp(argv[2], "--json") != 0) return usage(stderr), 1;
+        as_json = 1;
+    }
+    read_only_options(&options);
+    status = tinykv_open(database, &options, &db);
+    if (status != TINYKV_OK) return report(database, status), exit_code_for(status);
     status = tinykv_get_stats(db, &stats);
     tinykv_close(db);
-    if (status != TINYKV_OK) return report(argv[1], status), exit_code_for(status);
-    printf("records:         %llu\n"
-           "file_size:       %llu\n"
-           "live_bytes:      %llu\n"
-           "dead_bytes:      %llu\n"
-           "discarded_bytes: %llu\n"
-           "puts:            %llu\n"
-           "deletes:         %llu\n"
-           "compactions:     %llu\n",
-           (unsigned long long)stats.records,
-           (unsigned long long)stats.file_size,
-           (unsigned long long)stats.live_bytes,
-           (unsigned long long)stats.dead_bytes,
-           (unsigned long long)stats.discarded_bytes,
-           (unsigned long long)stats.puts,
-           (unsigned long long)stats.deletes,
-           (unsigned long long)stats.compactions);
+    if (status != TINYKV_OK) return report(database, status), exit_code_for(status);
+    if (as_json)
+        printf("{\n"
+               "  \"records\": %llu,\n"
+               "  \"file_size\": %llu,\n"
+               "  \"live_bytes\": %llu,\n"
+               "  \"dead_bytes\": %llu,\n"
+               "  \"discarded_bytes\": %llu,\n"
+               "  \"puts\": %llu,\n"
+               "  \"deletes\": %llu,\n"
+               "  \"compactions\": %llu,\n"
+               "  \"version\": \"%s\"\n"
+               "}\n",
+               (unsigned long long)stats.records,
+               (unsigned long long)stats.file_size,
+               (unsigned long long)stats.live_bytes,
+               (unsigned long long)stats.dead_bytes,
+               (unsigned long long)stats.discarded_bytes,
+               (unsigned long long)stats.puts,
+               (unsigned long long)stats.deletes,
+               (unsigned long long)stats.compactions,
+               tinykv_version_string());
+    else
+        printf("records:         %llu\n"
+               "file_size:       %llu\n"
+               "live_bytes:      %llu\n"
+               "dead_bytes:      %llu\n"
+               "discarded_bytes: %llu\n"
+               "puts:            %llu\n"
+               "deletes:         %llu\n"
+               "compactions:     %llu\n",
+               (unsigned long long)stats.records,
+               (unsigned long long)stats.file_size,
+               (unsigned long long)stats.live_bytes,
+               (unsigned long long)stats.dead_bytes,
+               (unsigned long long)stats.discarded_bytes,
+               (unsigned long long)stats.puts,
+               (unsigned long long)stats.deletes,
+               (unsigned long long)stats.compactions);
     return 0;
 }
 
@@ -252,17 +286,6 @@ static int cmd_batch(int argc, char **argv)
     tinykv_close(db);
     printf("imported %llu key(s)%s\n", imported,
            skipped ? " (some lines skipped: no TAB)" : "");
-    return 0;
-}
-
-static int read_only_options(tinykv_options *options)
-{
-    options->max_key_length = 4096;
-    options->max_value_length = 1048576;
-    options->sync = TINYKV_SYNC_EVERY_WRITE;
-    options->create_if_missing = 0;
-    options->read_only = 1;
-    options->lock = 0;
     return 0;
 }
 

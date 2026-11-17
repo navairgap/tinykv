@@ -15,6 +15,9 @@ test "$("$TOOL" list "$db")" = "$(printf 'greeting\thello\nuser\tnaveen')"
 "$TOOL" verify "$db"
 "$TOOL" compact "$db"
 "$TOOL" verify "$db"
+"$TOOL" stats "$db" --json > "$work/stats.json"
+grep -q '"records": 2' "$work/stats.json"
+grep -q '"version": "1.0.0"' "$work/stats.json"
 "$TOOL" del "$db" user
 if "$TOOL" get "$db" user; then
     echo "smoke: get of a deleted key must fail" >&2
