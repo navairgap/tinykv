@@ -29,6 +29,16 @@ static void usage(FILE *stream)
           stream);
 }
 
+static int stdout_dead;
+
+/* Emit bytes to stdout, flipping a flag instead of exiting mid-stream
+ * so the tool can finish cleanly and report the I/O failure. */
+static void emit(const void *bytes, size_t length)
+{
+    if (length != 0 && fwrite(bytes, 1, length, stdout) != length)
+        stdout_dead = 1;
+}
+
 static int exit_code_for(tinykv_status status)
 {
     switch (status) {
@@ -90,10 +100,11 @@ static int cmd_get(int argc, char **argv)
     status = tinykv_get(db, argv[2], strlen(argv[2]), &value, &value_length);
     tinykv_close(db);
     if (status != TINYKV_OK) return report(argv[1], status), exit_code_for(status);
-    if (value_length != 0 && fwrite(value, 1, value_length, stdout) != value_length)
-        return fprintf(stderr, "tinykv: write to stdout failed\n"), 6;
-    putchar('\n');
+    emit(value, value_length);
+    if (putchar('\n') == EOF) stdout_dead = 1;
     free(value);
+    if (stdout_dead)
+        return fprintf(stderr, "tinykv: write to stdout failed\n"), 6;
     return 0;
 }
 
@@ -131,14 +142,17 @@ static int cmd_list(int argc, char **argv)
     if (status == TINYKV_OK) {
         while (tinykv_iter_next(iter, &key, &klen, &value, &vlen) == TINYKV_OK &&
                key != NULL) {
-            fwrite(key, 1, klen, stdout);
-            putchar('\t');
-            fwrite(value, 1, vlen, stdout);
-            putchar('\n');
+            emit(key, klen);
+            if (putchar('\t') == EOF) stdout_dead = 1;
+            emit(value, vlen);
+            if (putchar('\n') == EOF) stdout_dead = 1;
+            if (stdout_dead) break;
         }
         tinykv_iter_free(iter);
     }
     tinykv_close(db);
+    if (stdout_dead)
+        return fprintf(stderr, "tinykv: write to stdout failed\n"), 6;
     if (status != TINYKV_OK) return report(argv[1], status), exit_code_for(status);
     return 0;
 }
@@ -427,6 +441,7 @@ static int cmd_repair(int argc, char **argv)
 
 int main(int argc, char **argv)
 {
+    int result;
     if (argc < 2) return usage(stderr), 1;
     if (strcmp(argv[1], "version") == 0) {
         printf("tinykv %s\n", tinykv_version_string());
@@ -435,19 +450,29 @@ int main(int argc, char **argv)
     if (strcmp(argv[1], "help") == 0 || strcmp(argv[1], "--help") == 0 ||
         strcmp(argv[1], "-h") == 0)
         return usage(stdout), 0;
-    if (strcmp(argv[1], "put") == 0) return cmd_put(argc - 1, argv + 1);
-    if (strcmp(argv[1], "get") == 0) return cmd_get(argc - 1, argv + 1);
-    if (strcmp(argv[1], "del") == 0 || strcmp(argv[1], "delete") == 0)
-        return cmd_delete(argc - 1, argv + 1);
-    if (strcmp(argv[1], "list") == 0) return cmd_list(argc - 1, argv + 1);
-    if (strcmp(argv[1], "count") == 0) return cmd_count(argc - 1, argv + 1);
-    if (strcmp(argv[1], "stats") == 0) return cmd_stats(argc - 1, argv + 1);
-    if (strcmp(argv[1], "compact") == 0) return cmd_compact(argc - 1, argv + 1);
-    if (strcmp(argv[1], "batch") == 0) return cmd_batch(argc - 1, argv + 1);
-    if (strcmp(argv[1], "copy") == 0) return cmd_copy(argc - 1, argv + 1);
-    if (strcmp(argv[1], "verify") == 0) return cmd_verify(argc - 1, argv + 1);
-    if (strcmp(argv[1], "repair") == 0) return cmd_repair(argc - 1, argv + 1);
-    fprintf(stderr, "tinykv: unknown command '%s'\n", argv[1]);
-    usage(stderr);
-    return 1;
+    if (strcmp(argv[1], "put") == 0) result = cmd_put(argc - 1, argv + 1);
+    else if (strcmp(argv[1], "get") == 0) result = cmd_get(argc - 1, argv + 1);
+    else if (strcmp(argv[1], "del") == 0 || strcmp(argv[1], "delete") == 0)
+        result = cmd_delete(argc - 1, argv + 1);
+    else if (strcmp(argv[1], "list") == 0) result = cmd_list(argc - 1, argv + 1);
+    else if (strcmp(argv[1], "count") == 0) result = cmd_count(argc - 1, argv + 1);
+    else if (strcmp(argv[1], "stats") == 0) result = cmd_stats(argc - 1, argv + 1);
+    else if (strcmp(argv[1], "compact") == 0) result = cmd_compact(argc - 1, argv + 1);
+    else if (strcmp(argv[1], "batch") == 0) result = cmd_batch(argc - 1, argv + 1);
+    else if (strcmp(argv[1], "copy") == 0) result = cmd_copy(argc - 1, argv + 1);
+    else if (strcmp(argv[1], "verify") == 0) result = cmd_verify(argc - 1, argv + 1);
+    else if (strcmp(argv[1], "repair") == 0) result = cmd_repair(argc - 1, argv + 1);
+    else {
+        fprintf(stderr, "tinykv: unknown command '%s'\n", argv[1]);
+        usage(stderr);
+        return 1;
+    }
+    /* Buffered output can fail only at the exit flush (ENOSPC, closed
+     * consumer), so check the stream once before reporting success. */
+    if (fflush(stdout) != 0 || ferror(stdout)) {
+        if (!stdout_dead)
+            fprintf(stderr, "tinykv: write to stdout failed\n");
+        return 6;
+    }
+    return result;
 }
