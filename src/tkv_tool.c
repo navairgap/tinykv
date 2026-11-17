@@ -19,7 +19,9 @@ static void usage(FILE *stream)
           "  count <db>               print the number of live keys\n"
           "  stats <db> [--json]      print storage statistics\n"
           "  compact <db>             rewrite the log, dropping dead bytes\n"
-          "  batch <db>               import stdin lines of key<TAB>value\n"
+          "  batch <db> [--sync=policy]\n"
+          "                           import stdin lines of key<TAB>value;\n"
+          "                           policy: none, close (default), every\n"
           "  copy <db> <new-db>       consistent snapshot into a new file\n"
           "  verify <db>              check the log for damage\n"
           "  repair <db> [--yes]      repair a damaged log (confirm with --yes)\n"
@@ -247,7 +249,9 @@ static int cmd_batch(int argc, char **argv)
     size_t capacity = 0;
     ssize_t got;
     unsigned long long imported = 0, skipped = 0;
-    if (argc != 2) return usage(stderr), 1;
+    const char *database;
+    if (argc < 2 || argc > 4) return usage(stderr), 1;
+    database = argv[1];
     /* Bulk loading prefers throughput; one sync at close. */
     options.max_key_length = 4096;
     options.max_value_length = 1048576;
@@ -255,8 +259,21 @@ static int cmd_batch(int argc, char **argv)
     options.create_if_missing = 1;
     options.read_only = 0;
     options.lock = 1;
-    status = tinykv_open(argv[1], &options, &db);
-    if (status != TINYKV_OK) return report(argv[1], status), exit_code_for(status);
+    if (argc == 3) {
+        if (strncmp(argv[2], "--sync=", 7) != 0) return usage(stderr), 1;
+        if (strcmp(argv[2] + 7, "none") == 0)
+            options.sync = TINYKV_SYNC_NONE;
+        else if (strcmp(argv[2] + 7, "close") == 0)
+            options.sync = TINYKV_SYNC_ON_CLOSE;
+        else if (strcmp(argv[2] + 7, "every") == 0)
+            options.sync = TINYKV_SYNC_EVERY_WRITE;
+        else
+            return usage(stderr), 1;
+    } else if (argc > 3) {
+        return usage(stderr), 1;
+    }
+    status = tinykv_open(database, &options, &db);
+    if (status != TINYKV_OK) return report(database, status), exit_code_for(status);
     while ((got = getline(&line, &capacity, stdin)) >= 0) {
         char *tab, *key = line, *value;
         size_t key_length, value_length;
