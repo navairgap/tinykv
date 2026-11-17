@@ -115,7 +115,7 @@ static void test_foreach_visits_live_entries_once(void)
 {
     tkv_index index;
     struct visit_state state = {0, 0};
-    char key[8];
+    char key[16];
     int i;
     assert(tkv_index_init(&index) == 0);
     for (i = 0; i < 100; ++i) {
