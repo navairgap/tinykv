@@ -18,7 +18,7 @@ LIB_SRCS := src/record_codec.c src/tkv_index.c src/tkv_io.c src/tkv_log.c \
             src/tkv_db.c
 LIB_OBJS := $(patsubst src/%.c,$(BUILD)/obj/%.o,$(LIB_SRCS))
 
-TESTS := test_record_codec test_index test_io test_log test_db
+TESTS := test_record_codec test_index test_io test_log test_db test_golden
 TEST_BINS := $(patsubst %,$(BUILD)/%,$(TESTS))
 TOOL := $(BUILD)/tinykv
 
