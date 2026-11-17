@@ -822,6 +822,20 @@ void tinykv_iter_free(tinykv_iter *iter)
     free(iter);
 }
 
+tinykv_status tinykv_path(const tinykv_db *db, const char **out_path)
+{
+    if (db == NULL || out_path == NULL) return TINYKV_ERR_INVALID;
+    *out_path = db->path;
+    return TINYKV_OK;
+}
+
+tinykv_status tinykv_file_size(const tinykv_db *db, uint64_t *out_size)
+{
+    if (db == NULL || out_size == NULL) return TINYKV_ERR_INVALID;
+    *out_size = db->file_size;
+    return TINYKV_OK;
+}
+
 tinykv_status tinykv_count(const tinykv_db *db, uint64_t *out_count)
 {
     if (db == NULL || out_count == NULL) return TINYKV_ERR_INVALID;

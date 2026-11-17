@@ -89,6 +89,11 @@ tinykv_status tinykv_compact(tinykv_db *db);
 
 tinykv_status tinykv_count(const tinykv_db *db, uint64_t *out_count);
 tinykv_status tinykv_get_stats(const tinykv_db *db, tinykv_stats *out_stats);
+/* Path the handle was opened with; *out_path is a borrowed pointer
+ * valid until close. */
+tinykv_status tinykv_path(const tinykv_db *db, const char **out_path);
+/* Current log size as tracked by this handle. */
+tinykv_status tinykv_file_size(const tinykv_db *db, uint64_t *out_size);
 
 /* Sorted key iteration. The iterator snapshots the key set at creation;
  * values are re-read on each step, and keys deleted meanwhile are skipped.

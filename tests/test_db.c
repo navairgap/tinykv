@@ -799,6 +799,29 @@ static void test_iteration_empty_and_fresh_values(void)
     tinykv_close(db);
 }
 
+static void test_accessors_report_path_and_size(void)
+{
+    char path[128];
+    tinykv_db *db = NULL;
+    const char *reported = NULL;
+    uint64_t size = 0;
+    db_path(path, sizeof(path), "accessors.db");
+    assert(tinykv_open(path, NULL, &db) == TINYKV_OK);
+    assert(tinykv_path(db, &reported) == TINYKV_OK);
+    assert(strcmp(reported, path) == 0);
+    assert(tinykv_file_size(db, &size) == TINYKV_OK);
+    assert(size == 0);
+    assert(tinykv_put(db, "alpha", 5, "one", 3) == TINYKV_OK);
+    assert(tinykv_file_size(db, &size) == TINYKV_OK);
+    assert(size == TINYKV_RECORD_HEADER_SIZE + 8);
+    assert(tinykv_compact(db) == TINYKV_OK);
+    assert(tinykv_file_size(db, &size) == TINYKV_OK);
+    assert(size == TINYKV_RECORD_HEADER_SIZE + 8);
+    assert(tinykv_path(db, NULL) == TINYKV_ERR_INVALID);
+    assert(tinykv_file_size(NULL, &size) == TINYKV_ERR_INVALID);
+    tinykv_close(db);
+}
+
 int main(void)
 {
     assert(mkdtemp(temp_dir) != NULL);
@@ -826,6 +849,7 @@ int main(void)
     test_get_into_copies_without_allocation();
     test_iteration_is_sorted_and_skips_deletes();
     test_iteration_empty_and_fresh_values();
+    test_accessors_report_path_and_size();
     remove_temp_dir();
     puts("tinykv db: all tests passed");
     return 0;
