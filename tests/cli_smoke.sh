@@ -39,10 +39,28 @@ if printf 'x\t1\n' | "$TOOL" batch "$db" --sync=bogus; then
     echo "smoke: batch must reject an unknown sync policy" >&2
     exit 1
 fi
+"$TOOL" export "$db" "$work/dump.tsv"
+test "$(wc -l < "$work/dump.tsv")" -ge 3
+if "$TOOL" export "$db" "$work/dump.tsv"; then
+    echo "smoke: export must refuse an existing file" >&2
+    exit 1
+fi
+"$TOOL" import "$work/fresh.db" "$work/dump.tsv"
+test "$("$TOOL" count "$work/fresh.db")" = "$("$TOOL" count "$db")"
+test "$("$TOOL" get "$work/fresh.db" greeting)" = hello
 "$TOOL" copy "$db" "$work/snapshot.db"
 test "$("$TOOL" count "$work/snapshot.db")" = 4
 test "$("$TOOL" get "$work/snapshot.db" k1)" = v1
-if "$TOOL" copy "$db" "$work/snapshot.db"; then
+if "$TOOL" export "$db" "$work/dump.tsv"
+test "$(wc -l < "$work/dump.tsv")" -ge 3
+if "$TOOL" export "$db" "$work/dump.tsv"; then
+    echo "smoke: export must refuse an existing file" >&2
+    exit 1
+fi
+"$TOOL" import "$work/fresh.db" "$work/dump.tsv"
+test "$("$TOOL" count "$work/fresh.db")" = "$("$TOOL" count "$db")"
+test "$("$TOOL" get "$work/fresh.db" greeting)" = hello
+"$TOOL" copy "$db" "$work/snapshot.db"; then
     echo "smoke: copy must refuse an existing destination" >&2
     exit 1
 fi
