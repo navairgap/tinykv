@@ -12,8 +12,31 @@
 
 `TINYKV_SYNC_EVERY_WRITE` is the default because a KV store that
 reports success for a write it could lose is lying by omission. Bulk
-loading should use `TINYKV_SYNC_ON_CLOSE` (the CLI `batch` command does)
-or `TINYKV_SYNC_NONE`.
+loading should use `TINYKV_SYNC_ON_CLOSE` (the CLI `batch` and `import`
+commands do) or `TINYKV_SYNC_NONE`.
+
+### The write buffer
+
+Appends accumulate in a 64 KiB userspace buffer and are handed to the
+file with positional writes — one syscall per buffer, not per record.
+The buffer never changes visibility (reads flush first) and never
+survives a clean close (close always flushes); it only changes *when
+bytes reach the OS*:
+
+- `TINYKV_SYNC_EVERY_WRITE`: flush + fsync per record (no batching).
+- `TINYKV_SYNC_ON_CLOSE`: batched writes, one fsync at close.
+- `TINYKV_SYNC_NONE`: batched writes, fsync only when you call
+  `tinykv_sync` (or never).
+
+A crash with `SYNC_NONE` can lose whatever sat in the buffer — exactly
+as unsynced. `tinykv_sync(db)` is the explicit checkpoint: flush plus
+fsync at any point.
+
+### Explicit syncs
+
+`tinykv_sync` flushes and fsyncs immediately under any policy,
+returning `TINYKV_ERR_IO` if the sync fails. Read-only handles have
+nothing to sync and reject it.
 
 ## Ordering guarantees
 
@@ -48,6 +71,16 @@ written. Recovery classifies outcomes:
   repair is an explicit operator action. tinykv never scans ahead for a
   plausible magic — that can reinterpret value bytes as records and eat
   data (see docs/repair-mode-safety.md).
+
+## Maintenance timing
+
+Compaction and repair are fsync-heavy by design. With
+`auto_compact_dead_ratio` set, a read-write close compacts best-effort
+when the dead-byte share crosses the ratio, then syncs per policy — so
+a `SYNC_NONE` writer can still get a compacted, synced log at shutdown
+by pairing the option with `tinykv_sync` semantics at close. A failed
+auto-compaction never fails the close; the log stays valid and the
+bytes stay where they were.
 
 ## Failed writes
 
