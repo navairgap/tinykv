@@ -105,11 +105,11 @@ this repo's own harness):
 
 | operation          | ops/s    |
 |--------------------|---------:|
-| put                | ~235,000 |
-| get (malloc)       | ~346,000 |
-| get_into (buffer)  | ~351,000 |
-| reopen (replay)    | ~564,000 records/s |
-| delete             | ~343,000 |
+| put                | ~260,000 |
+| get (malloc)       | ~490,000 |
+| get_into (buffer)  | ~529,000 |
+| reopen (replay)    | ~1,394,000 records/s |
+| delete             | ~340,000 |
 
 With `TINYKV_SYNC_EVERY_WRITE` (the default), each put costs one fsync —
 durability you can feel, and exactly what you want when the data matters
