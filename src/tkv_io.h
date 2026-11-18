@@ -14,6 +14,8 @@
 int tkv_write_all(int fd, const void *bytes, size_t length);
 /* 0 = full read, -1 = I/O error or fewer than length bytes available. */
 int tkv_pread_all(int fd, void *bytes, size_t length, uint64_t offset);
+/* Positional write-all: never disturbs the descriptor's file position. */
+int tkv_pwrite_all(int fd, const void *bytes, size_t length, uint64_t offset);
 int tkv_fsync_file(int fd);
 /* fsync the directory that contains path, so creates/renames persist. */
 int tkv_fsync_path(const char *path);

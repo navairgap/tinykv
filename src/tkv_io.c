@@ -40,6 +40,23 @@ int tkv_pread_all(int fd, void *bytes, size_t length, uint64_t offset)
     return 0;
 }
 
+int tkv_pwrite_all(int fd, const void *bytes, size_t length, uint64_t offset)
+{
+    const uint8_t *cursor = (const uint8_t *)bytes;
+    while (length != 0) {
+        ssize_t written = pwrite(fd, cursor, length, (off_t)offset);
+        if (written < 0) {
+            if (errno == EINTR) continue;
+            return -1;
+        }
+        if (written == 0) return -1;
+        cursor += (size_t)written;
+        offset += (uint64_t)written;
+        length -= (size_t)written;
+    }
+    return 0;
+}
+
 int tkv_fsync_file(int fd)
 {
     while (fsync(fd) != 0)

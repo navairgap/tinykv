@@ -1134,6 +1134,52 @@ static void test_every_single_byte_corruption_is_classified(void)
     }
 }
 
+static void test_write_buffering_and_flush_points(void)
+{
+    char path[128];
+    tinykv_db *db = NULL;
+    tinykv_options options;
+    void *value = NULL;
+    size_t value_length = 0;
+    struct stat st;
+    int i;
+    char key[16], val[24];
+    db_path(path, sizeof(path), "buffered.db");
+    options = tinykv_options_default_for_test();
+    options.sync = TINYKV_SYNC_NONE;
+    assert(tinykv_open(path, &options, &db) == TINYKV_OK);
+
+    /* A single small put stays in the write buffer... */
+    assert(tinykv_put(db, "alpha", 5, "one", 3) == TINYKV_OK);
+    assert(stat(path, &st) == 0 && st.st_size == 0); /* nothing flushed */
+    /* ...but reading it flushes and returns the right bytes. */
+    assert(tinykv_get(db, "alpha", 5, &value, &value_length) == TINYKV_OK);
+    assert(value_length == 3 && memcmp(value, "one", 3) == 0);
+    free(value);
+    assert(stat(path, &st) == 0 && st.st_size == 25);
+
+    /* A bulk load crosses the buffer threshold several times. */
+    for (i = 0; i < 5000; ++i) {
+        snprintf(key, sizeof(key), "key-%04d", i);
+        snprintf(val, sizeof(val), "value-%04d", i);
+        assert(tinykv_put(db, key, strlen(key), val, strlen(val)) == TINYKV_OK);
+    }
+    tinykv_close(db); /* close flushes the remainder */
+    assert(stat(path, &st) == 0);
+    assert((uint64_t)st.st_size == 25 + 5000u * (17 + 8 + 10));
+
+    /* Everything replays after the restart. */
+    assert(tinykv_open(path, &options, &db) == TINYKV_OK);
+    {
+        uint64_t count = 0;
+        assert(tinykv_count(db, &count) == TINYKV_OK && count == 5001);
+    }
+    assert(tinykv_get(db, "key-4999", 8, &value, &value_length) == TINYKV_OK);
+    assert(value_length == 10 && memcmp(value, "value-4999", 10) == 0);
+    free(value);
+    tinykv_close(db);
+}
+
 int main(void)
 {
     assert(mkdtemp(temp_dir) != NULL);
@@ -1168,6 +1214,7 @@ int main(void)
     test_reader_sees_writer_state_without_lock();
     test_verify_and_repair_on_missing_file();
     test_every_single_byte_corruption_is_classified();
+    test_write_buffering_and_flush_points();
     remove_temp_dir();
     puts("tinykv db: all tests passed");
     return 0;

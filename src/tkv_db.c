@@ -20,11 +20,18 @@ struct tinykv_db {
     tkv_index index;
     tkv_log_limits limits;
     tinykv_options options;
-    uint64_t file_size;
+    uint64_t file_size;      /* logical end of the log, including buffered */
+    uint64_t flushed_size;   /* bytes actually handed to the descriptor */
+    uint8_t *wbuf;           /* pending append bytes */
+    size_t wlen, wcap;
     int torn_tail;           /* a torn tail exists; reclaimed on next write */
     uint64_t tail_last_good; /* offset to truncate to before appending */
     uint64_t puts, deletes, gets, compactions;
 };
+
+/* Appends accumulate here so bulk loads pay syscalls per 64 KiB instead
+ * of per record; reads, syncs, and close flush first. */
+#define TINYKV_WRITE_BUFFER 65536u
 
 const char *tinykv_status_string(tinykv_status status)
 {
@@ -138,8 +145,32 @@ static tinykv_status reclaim_torn_tail(tinykv_db *db)
         return TINYKV_ERR_IO;
     if (tkv_fsync_file(db->fd) != 0) return TINYKV_ERR_IO;
     db->file_size = db->tail_last_good;
+    db->flushed_size = db->tail_last_good;
     db->torn_tail = 0;
     return TINYKV_OK;
+}
+
+/* Hand pending append bytes to the descriptor; data reaches the page
+ * cache but is only durable once an fsync follows. Positional writes:
+ * the descriptor's file position belongs to nobody in particular. */
+static tinykv_status flush_wbuf(tinykv_db *db)
+{
+    if (db->wlen == 0) return TINYKV_OK;
+    if (tkv_pwrite_all(db->fd, db->wbuf, db->wlen, db->flushed_size) != 0)
+        return TINYKV_ERR_IO;
+    db->flushed_size += db->wlen;
+    db->wlen = 0;
+    return TINYKV_OK;
+}
+
+/* Reads never look past the flushed region, so any access to a record
+ * still sitting in the write buffer flushes first. */
+static tinykv_status flush_for_read(const tinykv_db *db, uint64_t offset,
+                                    uint32_t record_length)
+{
+    return offset + record_length > db->flushed_size
+               ? flush_wbuf((tinykv_db *)db)
+               : TINYKV_OK;
 }
 
 static tinykv_status write_record(tinykv_db *db, uint8_t type,
@@ -147,31 +178,62 @@ static tinykv_status write_record(tinykv_db *db, uint8_t type,
                                   const void *value, size_t value_length)
 {
     tinykv_status status;
+    tinykv_record_status encoded_status;
+    uint8_t *encoded = NULL;
+    size_t encoded_length = 0;
     uint64_t offset;
-    size_t record_length;
-    int result;
 
     status = reclaim_torn_tail(db);
     if (status != TINYKV_OK) return status;
-    result = tkv_log_append(db->fd, type, key, key_length, value,
-                            value_length, &db->limits, &offset,
-                            &record_length);
-    if (result == -1) return TINYKV_ERR_IO;
-    if (result != 0) return status_from_codec((tinykv_record_status)result);
-    if (db->options.sync == TINYKV_SYNC_EVERY_WRITE &&
-        tkv_fsync_file(db->fd) != 0)
-        return TINYKV_ERR_IO;
+    encoded_status = tinykv_record_encode(type, (const uint8_t *)key,
+                                          key_length, (const uint8_t *)value,
+                                          value_length,
+                                          db->limits.max_key_length,
+                                          db->limits.max_value_length,
+                                          &encoded, &encoded_length);
+    if (encoded_status != TINYKV_RECORD_OK) {
+        free(encoded);
+        return status_from_codec(encoded_status);
+    }
+    offset = db->file_size;
+    if (db->wlen + encoded_length > db->wcap) {
+        size_t larger = db->wcap ? db->wcap : TINYKV_WRITE_BUFFER;
+        uint8_t *grown;
+        while (larger < db->wlen + encoded_length) larger *= 2;
+        grown = (uint8_t *)realloc(db->wbuf, larger);
+        if (grown == NULL) {
+            free(encoded);
+            return TINYKV_ERR_NOMEM;
+        }
+        db->wbuf = grown;
+        db->wcap = larger;
+    }
+    memcpy(db->wbuf + db->wlen, encoded, encoded_length);
+    db->wlen += encoded_length;
+    free(encoded);
+
     if (type == TINYKV_RECORD_PUT) {
         if (tkv_index_put(&db->index, (const uint8_t *)key, key_length,
-                          offset, (uint32_t)record_length,
-                          (uint32_t)value_length) != 0)
+                          offset, (uint32_t)encoded_length,
+                          (uint32_t)value_length) != 0) {
+            db->wlen -= encoded_length; /* index is authoritative */
             return TINYKV_ERR_NOMEM;
+        }
         db->puts++;
     } else {
         tkv_index_remove(&db->index, (const uint8_t *)key, key_length);
         db->deletes++;
     }
-    db->file_size = offset + record_length;
+    db->file_size = offset + encoded_length;
+
+    if (db->options.sync == TINYKV_SYNC_EVERY_WRITE) {
+        status = flush_wbuf(db);
+        if (status != TINYKV_OK) return status;
+        if (tkv_fsync_file(db->fd) != 0) return TINYKV_ERR_IO;
+    } else if (db->wlen >= TINYKV_WRITE_BUFFER) {
+        status = flush_wbuf(db);
+        if (status != TINYKV_OK) return status;
+    }
     return TINYKV_OK;
 }
 
@@ -207,6 +269,7 @@ tinykv_status tinykv_get(const tinykv_db *db, const void *key,
     size_t consumed = 0;
     void *value;
     tinykv_record_status status;
+    tinykv_status flush_status;
 
     if (out_value == NULL || out_value_length == NULL)
         return TINYKV_ERR_INVALID;
@@ -217,6 +280,9 @@ tinykv_status tinykv_get(const tinykv_db *db, const void *key,
 
     entry = tkv_index_find(&db->index, (const uint8_t *)key, key_length);
     if (entry == NULL) return TINYKV_ERR_NOT_FOUND;
+
+    flush_status = flush_for_read(db, entry->offset, entry->record_length);
+    if (flush_status != TINYKV_OK) return flush_status;
 
     record = (uint8_t *)malloc(entry->record_length);
     if (record == NULL) return TINYKV_ERR_NOMEM;
@@ -252,6 +318,7 @@ static void db_free(tinykv_db *db)
 {
     if (db == NULL) return;
     tkv_index_free(&db->index);
+    free(db->wbuf);
     free(db->path);
     free(db);
 }
@@ -330,6 +397,7 @@ tinykv_status tinykv_open(const char *path, const tinykv_options *options,
             goto fail;
         }
         db->file_size = scan.total_bytes;
+        db->flushed_size = scan.total_bytes;
         db->torn_tail = scan.stop_status == TINYKV_RECORD_TRUNCATED;
         db->tail_last_good = scan.last_good_offset;
     }
@@ -455,6 +523,8 @@ tinykv_status tinykv_compact(tinykv_db *db)
 
     status = reclaim_torn_tail(db);
     if (status != TINYKV_OK) return status;
+    status = flush_wbuf(db); /* reads below pread the flushed region */
+    if (status != TINYKV_OK) return status;
 
     memset(&state, 0, sizeof(state));
     state.db = db;
@@ -491,6 +561,8 @@ tinykv_status tinykv_compact(tinykv_db *db)
         state.list[i].entry->offset = state.list[i].new_offset;
     free(state.list);
     db->file_size = state.offset;
+    db->flushed_size = state.offset;
+    db->wlen = 0;
     db->compactions++;
     return TINYKV_OK;
 }
@@ -672,6 +744,7 @@ tinykv_status tinykv_get_into(const tinykv_db *db, const void *key,
     tinykv_record_view view;
     size_t consumed = 0;
     tinykv_record_status status;
+    tinykv_status flush_status;
 
     if (out_value_length == NULL) return TINYKV_ERR_INVALID;
     *out_value_length = 0;
@@ -683,6 +756,9 @@ tinykv_status tinykv_get_into(const tinykv_db *db, const void *key,
     if (entry == NULL) return TINYKV_ERR_NOT_FOUND;
     *out_value_length = entry->value_length;
     if (entry->value_length > capacity) return TINYKV_ERR_LIMIT;
+
+    flush_status = flush_for_read(db, entry->offset, entry->record_length);
+    if (flush_status != TINYKV_OK) return flush_status;
 
     record = (uint8_t *)malloc(entry->record_length);
     if (record == NULL) return TINYKV_ERR_NOMEM;
@@ -846,9 +922,13 @@ tinykv_status tinykv_count(const tinykv_db *db, uint64_t *out_count)
 tinykv_status tinykv_close(tinykv_db *db)
 {
     if (db == NULL) return TINYKV_OK;
-    if (db->fd >= 0 && !db->options.read_only &&
-        db->options.sync == TINYKV_SYNC_ON_CLOSE)
-        (void)tkv_fsync_file(db->fd);
+    if (db->fd >= 0 && !db->options.read_only) {
+        /* A clean close never loses buffered records: hand them to the
+         * descriptor before syncing per policy. */
+        (void)flush_wbuf(db);
+        if (db->options.sync == TINYKV_SYNC_ON_CLOSE)
+            (void)tkv_fsync_file(db->fd);
+    }
     if (db->lock_fd >= 0) {
         tkv_unlock(db->lock_fd);
         close(db->lock_fd);
