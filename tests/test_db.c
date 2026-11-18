@@ -1518,6 +1518,38 @@ static void test_get_multi_under_concurrent_deletes(void)
     tinykv_close(db);
 }
 
+static void test_iter_edge_cases(void)
+{
+    char path[128];
+    tinykv_db *db = NULL;
+    tinykv_iter *iter = NULL;
+    const void *key = NULL, *value = NULL;
+    size_t klen = 0, vlen = 0;
+    uint64_t remaining = 0;
+    db_path(path, sizeof(path), "iter-edge.db");
+    assert(tinykv_open(path, NULL, &db) == TINYKV_OK);
+    /* A fresh empty database iterates to an immediate end. */
+    assert(tinykv_iter_new(db, &iter) == TINYKV_OK);
+    assert(tinykv_iter_remaining(iter, &remaining) == TINYKV_OK);
+    assert(remaining == 0);
+    assert(tinykv_iter_next(iter, &key, &klen, &value, &vlen) == TINYKV_OK);
+    assert(key == NULL && value == NULL);
+    tinykv_iter_free(iter);
+    /* Argument validation: NULL outputs and NULL db are rejected. */
+    assert(tinykv_iter_new(db, NULL) == TINYKV_ERR_INVALID);
+    assert(tinykv_iter_new(NULL, &iter) == TINYKV_ERR_INVALID);
+    assert(tinykv_iter_next(NULL, &key, &klen, &value, &vlen) ==
+           TINYKV_ERR_INVALID);
+    /* Prefix larger than any key length matches nothing, not an error. */
+    assert(tinykv_put(db, "k", 1, "v", 1) == TINYKV_OK);
+    assert(tinykv_iter_new_prefix(db, "longer-than-key", 15, &iter) ==
+           TINYKV_OK);
+    assert(tinykv_iter_next(iter, &key, &klen, &value, &vlen) == TINYKV_OK);
+    assert(key == NULL);
+    tinykv_iter_free(iter);
+    tinykv_close(db);
+}
+
 int main(void)
 {
     assert(mkdtemp(temp_dir) != NULL);
@@ -1563,6 +1595,7 @@ int main(void)
     test_get_multi_resolves_batches();
     test_auto_compact_threshold_boundary();
     test_get_multi_under_concurrent_deletes();
+    test_iter_edge_cases();
     remove_temp_dir();
     puts("tinykv db: all tests passed");
     return 0;
