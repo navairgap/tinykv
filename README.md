@@ -151,6 +151,21 @@ actually read.
 - [docs/checksum-golden-vectors.md](docs/checksum-golden-vectors.md) — interop fixtures
 - [docs/repair-mode-safety.md](docs/repair-mode-safety.md) — repair workflow rules
 
+## Build targets
+
+| target | what it does |
+|---|---|
+| `make all` | library, tests, tool, example (default) |
+| `make test` | run every test program |
+| `make smoke` | end-to-end CLI exercise |
+| `make fuzz` | deterministic corruption + scanner fuzzing |
+| `make bench` | throughput benchmark (keys, value size, threads) |
+| `make SAN=1` | address + undefined sanitizer build |
+| `make TSAN=1` | ThreadSanitizer build (exclusive with `SAN=1`) |
+| `make NO_THREADS=1` | drop pthreads; serialize handles yourself |
+| `make install` / `uninstall` | library, headers, tool, pkg-config |
+| `make dist` | source tarball of the current tree |
+
 ## Testing
 
 Six test programs cover the codec, index, POSIX I/O layer, log scan and
