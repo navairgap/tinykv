@@ -28,7 +28,8 @@ static void usage(FILE *stream)
           "                           policy: none, close (default), every\n"
           "  copy <db> <new-db>       consistent snapshot into a new file\n"
           "  verify <db> [--json]     check the log for damage\n"
-          "  repair <db> [--yes]      repair a damaged log (confirm with --yes)\n"
+          "  repair <db> [--yes] [--max-key=N] [--max-value=N]\n"
+          "                           repair a damaged log (confirm with --yes)\n"
           "  version                  print the version\n",
           stream);
 }
@@ -551,19 +552,50 @@ static int cmd_copy(int argc, char **argv)
     return 0;
 }
 
+/* Parse repeated --max-key=N / --max-value=N options for verify and
+ * repair, so databases opened with custom limits can be maintained. */
+static int parse_limit_flags(int argc, char **argv, int start,
+                             uint32_t *max_key, uint32_t *max_value)
+{
+    int i;
+    *max_key = 4096;
+    *max_value = 1048576;
+    for (i = start; i < argc; ++i) {
+        if (strcmp(argv[i], "--json") == 0 || strcmp(argv[i], "--yes") == 0)
+            continue; /* handled by the caller */
+        if (strncmp(argv[i], "--max-key=", 10) == 0) {
+            char *end;
+            unsigned long parsed = strtoul(argv[i] + 10, &end, 10);
+            if (*end != '\0' || parsed == 0 || parsed > UINT32_MAX)
+                return -1;
+            *max_key = (uint32_t)parsed;
+        } else if (strncmp(argv[i], "--max-value=", 12) == 0) {
+            char *end;
+            unsigned long parsed = strtoul(argv[i] + 12, &end, 10);
+            if (*end != '\0' || parsed == 0 || parsed > UINT32_MAX)
+                return -1;
+            *max_value = (uint32_t)parsed;
+        } else {
+            return -1;
+        }
+    }
+    return 0;
+}
+
 static int cmd_verify(int argc, char **argv)
 {
     uint64_t last_good = 0;
     tinykv_status status;
     int as_json = 0;
+    uint32_t max_key, max_value;
     const char *database;
-    if (argc < 2 || argc > 3) return usage(stderr), 1;
+    if (argc < 2 || argc > 4) return usage(stderr), 1;
     database = argv[1];
-    if (argc == 3) {
-        if (strcmp(argv[2], "--json") != 0) return usage(stderr), 1;
-        as_json = 1;
-    }
-    status = tinykv_verify(database, 4096, 1048576, &last_good);
+    if (parse_limit_flags(argc, argv, 2, &max_key, &max_value) != 0)
+        return usage(stderr), 1;
+    if (strcmp(argv[argc - 1], "--json") == 0) as_json = 1;
+    if (argc >= 3 && strcmp(argv[2], "--json") == 0) as_json = 1;
+    status = tinykv_verify(database, max_key, max_value, &last_good);
     if (as_json) {
         printf("{\n"
                "  \"status\": \"%s\",\n"
@@ -592,14 +624,22 @@ static int cmd_repair(int argc, char **argv)
     uint64_t last_good = 0;
     tinykv_status status;
     int confirm = 0;
+    uint32_t max_key, max_value;
     const char *database;
-    if (argc < 2 || argc > 3) return usage(stderr), 1;
+    int i;
+    if (argc < 2 || argc > 4) return usage(stderr), 1;
     database = argv[1];
-    if (argc == 3) {
-        if (strcmp(argv[2], "--yes") != 0) return usage(stderr), 1;
-        confirm = 1;
+    for (i = 2; i < argc; ++i) {
+        if (strcmp(argv[i], "--yes") == 0) confirm = 1;
+        else if (strncmp(argv[i], "--max-key=", 10) == 0 ||
+                 strncmp(argv[i], "--max-value=", 12) == 0)
+            continue;
+        else
+            return usage(stderr), 1;
     }
-    status = tinykv_verify(database, 4096, 1048576, &last_good);
+    if (parse_limit_flags(argc, argv, 2, &max_key, &max_value) != 0)
+        return usage(stderr), 1;
+    status = tinykv_verify(database, max_key, max_value, &last_good);
     if (status == TINYKV_OK) {
         printf("%s: clean, nothing to repair\n", database);
         return 0;
@@ -617,7 +657,7 @@ static int cmd_repair(int argc, char **argv)
         printf("dry run:  rerun with --yes to apply\n");
         return exit_code_for(status);
     }
-    status = tinykv_repair(database, 4096, 1048576, 0, &last_good);
+    status = tinykv_repair(database, max_key, max_value, 0, &last_good);
     if (status != TINYKV_OK) return report(database, status), exit_code_for(status);
     printf("repaired: %s now replays to offset %llu\n",
            database, (unsigned long long)last_good);

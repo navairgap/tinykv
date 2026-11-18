@@ -39,6 +39,8 @@ if "$TOOL" get "$db" user; then
     exit 1
 fi
 test "$("$TOOL" count "$db")" = 1
+"$TOOL" verify "$db" --max-key=4096 --max-value=1048576
+"$TOOL" repair "$db" --max-key=4096 --max-value=1048576 | grep -q "clean"
 printf 'k1\tv1\nk2\tv2\n' | "$TOOL" batch "$db"
 test "$("$TOOL" count "$db")" = 3
 printf 'synced\t1\n' | "$TOOL" batch "$db" --sync=every
