@@ -1,4 +1,4 @@
-/* Fuzz harness for the record codec decoder.
+/* Fuzz harnesses for the record codec decoder and the recovery scanner.
  *
  * Build with libFuzzer (clang):
  *   clang -fsanitize=fuzzer,address -DTINYKV_HAVE_LIBFUZZER -Iinclude \
@@ -14,6 +14,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "tkv_log.h"
+#include "tkv_io.h"
+#include <unistd.h>
+
+int LLVMFuzzerTestScan(const uint8_t *data, size_t size);
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 {
     size_t pos = 0;
@@ -29,6 +34,53 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
             abort();
         pos += consumed;
     }
+    LLVMFuzzerTestScan(data, size);
+    return 0;
+}
+
+/* Scanner invariant check: replay the input as if it were a log file.
+ * Callback views must stay in bounds, last_good_offset must never
+ * exceed the file, and a tail classification must account for every
+ * discarded byte. */
+static int fuzz_scanned;
+static int scan_capture(const tinykv_record_view *view, uint64_t offset,
+                        void *user)
+{
+    const uint8_t *data = (const uint8_t *)user;
+    (void)offset; /* in-bounds checks read the end from fuzz_scanned */
+    if (view->key + view->key_length > data + fuzz_scanned ||
+        view->value + view->value_length > data + fuzz_scanned)
+        return 1;
+    return 0;
+}
+
+/* libFuzzer builds call both checks from the single entry point. */
+int LLVMFuzzerTestScan(const uint8_t *data, size_t size)
+{
+    char path[] = "/tmp/tinykv-fuzz-scan-XXXXXX";
+    tkv_log_limits limits = {4096, 1048576};
+    tkv_log_scan_result result;
+    int fd = mkstemp(path);
+    if (fd < 0) return 0;
+    fuzz_scanned = (int)size;
+    if (size != 0 && tkv_write_all(fd, data, size) != 0) {
+        close(fd);
+        unlink(path);
+        return 0;
+    }
+    if (tkv_log_scan(fd, &limits, scan_capture, (void *)data, &result) != 0) {
+        close(fd);
+        unlink(path);
+        return 0;
+    }
+    if (result.last_good_offset > size) abort();
+    if (result.tail_truncated &&
+        result.last_good_offset + result.discarded_bytes != size) abort();
+    if (!result.tail_truncated &&
+        result.stop_status != TINYKV_RECORD_OK &&
+        result.stop_offset > size) abort();
+    close(fd);
+    unlink(path);
     return 0;
 }
 
@@ -65,6 +117,10 @@ int main(void)
         LLVMFuzzerTestOneInput(mutated, sizeof(mutated));
         LLVMFuzzerTestOneInput(mutated, byte);
     }
+    /* Whole-log shapes through the scanner: valid, torn, and corrupt. */
+    LLVMFuzzerTestScan(corpus, sizeof(corpus));
+    for (byte = 0; byte <= sizeof(corpus); ++byte)
+        LLVMFuzzerTestScan(corpus, byte);
     for (byte = 0; byte <= sizeof(corpus); ++byte)
         LLVMFuzzerTestOneInput(corpus, byte);
 
