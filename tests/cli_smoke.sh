@@ -51,6 +51,16 @@ if printf 'x\t1\n' | "$TOOL" batch "$db" --sync=bogus; then
 fi
 "$TOOL" export "$db" "$work/dump.tsv"
 test "$(wc -l < "$work/dump.tsv")" -ge 3
+# Property: import(export(db)) into a fresh file preserves every key
+# and value byte-for-byte, including empty values.
+"$TOOL" export "$db" "$work/round1.tsv"
+"$TOOL" import "$work/roundtrip.db" "$work/round1.tsv"
+"$TOOL" export "$work/roundtrip.db" "$work/round2.tsv"
+cmp "$work/round1.tsv" "$work/round2.tsv"
+printf 'empty:\t\nspaced\tvalue with spaces\n' | "$TOOL" batch "$work/roundtrip.db" > /dev/null
+"$TOOL" export "$work/roundtrip.db" "$work/round3.tsv"
+grep -qF "$(printf 'empty:\t')" "$work/round3.tsv"
+grep -qF "$(printf 'spaced\tvalue with spaces')" "$work/round3.tsv"
 if "$TOOL" export "$db" "$work/dump.tsv"; then
     echo "smoke: export must refuse an existing file" >&2
     exit 1
@@ -63,6 +73,16 @@ test "$("$TOOL" count "$work/snapshot.db")" = 4
 test "$("$TOOL" get "$work/snapshot.db" k1)" = v1
 if "$TOOL" export "$db" "$work/dump.tsv"
 test "$(wc -l < "$work/dump.tsv")" -ge 3
+# Property: import(export(db)) into a fresh file preserves every key
+# and value byte-for-byte, including empty values.
+"$TOOL" export "$db" "$work/round1.tsv"
+"$TOOL" import "$work/roundtrip.db" "$work/round1.tsv"
+"$TOOL" export "$work/roundtrip.db" "$work/round2.tsv"
+cmp "$work/round1.tsv" "$work/round2.tsv"
+printf 'empty:\t\nspaced\tvalue with spaces\n' | "$TOOL" batch "$work/roundtrip.db" > /dev/null
+"$TOOL" export "$work/roundtrip.db" "$work/round3.tsv"
+grep -qF "$(printf 'empty:\t')" "$work/round3.tsv"
+grep -qF "$(printf 'spaced\tvalue with spaces')" "$work/round3.tsv"
 if "$TOOL" export "$db" "$work/dump.tsv"; then
     echo "smoke: export must refuse an existing file" >&2
     exit 1
