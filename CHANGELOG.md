@@ -4,6 +4,30 @@ All notable changes to tinykv are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 versions [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Features
+
+- `tinykv_exists` presence checks answered from the index alone
+- `tinykv_get_multi` batched reads under one lock acquisition
+- `tinykv_iter_remaining` upper-bound iteration progress
+- CLI `exists`, `count [prefix]`, and `verify --json`
+- `verify`/`repair` accept `--max-key`/`--max-value` for custom-limit
+  databases
+- Benchmark phases for `exists` (~3.3M ops/s) and batched reads
+
+### Fixed
+
+- Index capacity is released when a database's index is cleared
+- `list` options are fully initialized (uninitialized
+  `auto_compact_dead_ratio` field)
+
+### Testing
+
+- Export/import double round-trip property test
+- Auto-compact threshold boundary, batch-under-delete, prefix
+  iteration after concurrent writes, and iterator progress tests
+
 ## [1.5.0] - 2026-11-18
 
 Performance, concurrency, and queryability: the write path triples in
