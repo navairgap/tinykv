@@ -1211,6 +1211,55 @@ static void test_explicit_sync_makes_none_durable(void)
     tinykv_close(db);
 }
 
+static void test_prefix_iteration(void)
+{
+    char path[128];
+    tinykv_db *db = NULL;
+    tinykv_iter *iter = NULL;
+    const void *key = NULL, *value = NULL;
+    size_t klen = 0, vlen = 0;
+    int seen = 0;
+    db_path(path, sizeof(path), "prefix.db");
+    assert(tinykv_open(path, NULL, &db) == TINYKV_OK);
+    assert(tinykv_put(db, "user:1", 6, "a", 1) == TINYKV_OK);
+    assert(tinykv_put(db, "user:2", 6, "b", 1) == TINYKV_OK);
+    assert(tinykv_put(db, "user:10", 7, "c", 1) == TINYKV_OK);
+    assert(tinykv_put(db, "session:9", 9, "d", 1) == TINYKV_OK);
+
+    assert(tinykv_iter_new_prefix(db, "user:", 5, &iter) == TINYKV_OK);
+    while (tinykv_iter_next(iter, &key, &klen, &value, &vlen) == TINYKV_OK &&
+           key != NULL) {
+        assert(klen >= 5 && memcmp(key, "user:", 5) == 0);
+        seen++;
+    }
+    assert(seen == 3); /* session:9 is excluded, order stays sorted */
+    tinykv_iter_free(iter);
+
+    /* A zero-length prefix means the whole keyspace. */
+    assert(tinykv_iter_new_prefix(db, NULL, 0, &iter) == TINYKV_OK);
+    assert(tinykv_iter_next(iter, &key, &klen, &value, &vlen) == TINYKV_OK);
+    assert(key != NULL);
+    tinykv_iter_free(iter);
+
+    /* A prefix matching nothing yields an immediate end. */
+    assert(tinykv_iter_new_prefix(db, "zzz-none", 8, &iter) == TINYKV_OK);
+    assert(tinykv_iter_next(iter, &key, &klen, &value, &vlen) == TINYKV_OK);
+    assert(key == NULL);
+    tinykv_iter_free(iter);
+
+    /* An exact-key prefix returns exactly that key. */
+    assert(tinykv_iter_new_prefix(db, "session:9", 9, &iter) == TINYKV_OK);
+    assert(tinykv_iter_next(iter, &key, &klen, &value, &vlen) == TINYKV_OK);
+    assert(klen == 9 && memcmp(key, "session:9", 9) == 0);
+    assert(tinykv_iter_next(iter, &key, &klen, &value, &vlen) == TINYKV_OK);
+    assert(key == NULL);
+    tinykv_iter_free(iter);
+
+    assert(tinykv_iter_new_prefix(db, NULL, 3, &iter) ==
+           TINYKV_ERR_INVALID);
+    tinykv_close(db);
+}
+
 int main(void)
 {
     assert(mkdtemp(temp_dir) != NULL);
@@ -1247,6 +1296,7 @@ int main(void)
     test_every_single_byte_corruption_is_classified();
     test_write_buffering_and_flush_points();
     test_explicit_sync_makes_none_durable();
+    test_prefix_iteration();
     remove_temp_dir();
     puts("tinykv db: all tests passed");
     return 0;

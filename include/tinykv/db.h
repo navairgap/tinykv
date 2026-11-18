@@ -103,9 +103,14 @@ tinykv_status tinykv_file_size(const tinykv_db *db, uint64_t *out_size);
 
 /* Sorted key iteration. The iterator snapshots the key set at creation;
  * values are re-read on each step, and keys deleted meanwhile are skipped.
- * Pointers returned by tinykv_iter_next stay valid until the next call. */
+ * Pointers returned by tinykv_iter_next stay valid until the next call.
+ * The prefix variant snapshots only keys starting with the prefix bytes
+ * (NULL prefix with length 0 means the whole keyspace). */
 typedef struct tinykv_iter tinykv_iter;
 tinykv_status tinykv_iter_new(const tinykv_db *db, tinykv_iter **out_iter);
+tinykv_status tinykv_iter_new_prefix(const tinykv_db *db, const void *prefix,
+                                     size_t prefix_length,
+                                     tinykv_iter **out_iter);
 tinykv_status tinykv_iter_next(tinykv_iter *iter, const void **out_key,
                                size_t *out_key_length, const void **out_value,
                                size_t *out_value_length);

@@ -871,6 +871,9 @@ struct tinykv_iter {
     size_t count, position;
     uint8_t *value;
     size_t value_length;
+    uint8_t *prefix; /* optional key filter, NULL = whole keyspace */
+    uint32_t prefix_length;
+    int oom;
 };
 
 static int iter_key_compare(const void *left, const void *right)
@@ -891,8 +894,15 @@ static void iter_collect(tkv_entry *entry, void *user)
     uint8_t *copy;
     /* The caller holds the db lock discipline; the index must not grow
      * while iterating, which holds because we never put during a walk. */
+    if (iter->prefix != NULL &&
+        (entry->key_length < iter->prefix_length ||
+         memcmp(entry->key, iter->prefix, iter->prefix_length) != 0))
+        return;
     copy = (uint8_t *)malloc(entry->key_length ? entry->key_length : 1);
-    if (copy == NULL) return; /* leave the slot NULL; skipped below */
+    if (copy == NULL) {
+        iter->oom = 1;
+        return;
+    }
     if (entry->key_length != 0)
         memcpy(copy, entry->key, entry->key_length);
     iter->keys[iter->count].key = copy;
@@ -900,11 +910,16 @@ static void iter_collect(tkv_entry *entry, void *user)
     iter->count++;
 }
 
-tinykv_status tinykv_iter_new(const tinykv_db *db, tinykv_iter **out_iter)
+tinykv_status tinykv_iter_new_prefix(const tinykv_db *db,
+                                     const void *prefix,
+                                     size_t prefix_length,
+                                     tinykv_iter **out_iter)
 {
     struct tinykv_iter *iter;
     size_t index_count;
     if (db == NULL || out_iter == NULL) return TINYKV_ERR_INVALID;
+    if (prefix == NULL && prefix_length != 0) return TINYKV_ERR_INVALID;
+    if (prefix_length > UINT32_MAX) return TINYKV_ERR_INVALID;
     *out_iter = NULL;
     iter = (struct tinykv_iter *)calloc(1, sizeof(*iter));
     if (iter == NULL) return TINYKV_ERR_NOMEM;
@@ -916,10 +931,19 @@ tinykv_status tinykv_iter_new(const tinykv_db *db, tinykv_iter **out_iter)
         free(iter);
         return TINYKV_ERR_NOMEM;
     }
+    if (prefix_length != 0) {
+        iter->prefix = (uint8_t *)malloc(prefix_length);
+        if (iter->prefix == NULL) {
+            tinykv_iter_free(iter);
+            return TINYKV_ERR_NOMEM;
+        }
+        memcpy(iter->prefix, prefix, prefix_length);
+        iter->prefix_length = (uint32_t)prefix_length;
+    }
     tkv_mutex_lock(handle_mutex(db));
     tkv_index_foreach(&db->index, iter_collect, iter);
     tkv_mutex_unlock(handle_mutex(db));
-    if (iter->count != index_count) {
+    if (iter->oom) {
         tinykv_iter_free(iter);
         return TINYKV_ERR_NOMEM;
     }
@@ -927,6 +951,11 @@ tinykv_status tinykv_iter_new(const tinykv_db *db, tinykv_iter **out_iter)
           iter_key_compare);
     *out_iter = iter;
     return TINYKV_OK;
+}
+
+tinykv_status tinykv_iter_new(const tinykv_db *db, tinykv_iter **out_iter)
+{
+    return tinykv_iter_new_prefix(db, NULL, 0, out_iter);
 }
 
 tinykv_status tinykv_iter_next(tinykv_iter *iter, const void **out_key,
@@ -980,6 +1009,7 @@ void tinykv_iter_free(tinykv_iter *iter)
         free(iter->keys[i].key);
     free(iter->keys);
     free(iter->value);
+    free(iter->prefix);
     free(iter);
 }
 
