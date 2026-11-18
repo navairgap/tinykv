@@ -87,8 +87,8 @@ jobs:
           src/record_codec.c src/tkv_log.c src/tkv_io.c
           fuzz/record_codec_fuzz.c
           -o /tmp/record-fuzz
-      - name: Fuzz the codec for 60 seconds
-        run: /tmp/record-fuzz -max_total_time=60 -rss_limit_mb=2048
+      - name: Fuzz the codec and scanner for 60 seconds
+        run: /tmp/record-fuzz -max_total_time=60 -rss_limit_mb=2048 fuzz/corpus
 
   tool-smoke:
     name: cli smoke test
