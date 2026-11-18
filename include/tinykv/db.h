@@ -20,9 +20,9 @@ extern "C" {
 #endif
 
 #define TINYKV_VERSION_MAJOR 1
-#define TINYKV_VERSION_MINOR 0
+#define TINYKV_VERSION_MINOR 5
 #define TINYKV_VERSION_PATCH 0
-#define TINYKV_VERSION_STRING "1.0.0"
+#define TINYKV_VERSION_STRING "1.5.0"
 
 typedef enum {
     TINYKV_OK = 0,

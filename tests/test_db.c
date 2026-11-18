@@ -159,7 +159,7 @@ static void test_torn_tail_opens_cleanly(void)
 static void test_version_and_status_strings(void)
 {
     assert(tinykv_version_string() != NULL);
-    assert(strcmp(tinykv_version_string(), "1.0.0") == 0);
+    assert(strcmp(tinykv_version_string(), "1.5.0") == 0);
     assert(strcmp(tinykv_status_string(TINYKV_OK), "ok") == 0);
     assert(strcmp(tinykv_status_string((tinykv_status)999),
                   "unknown status") == 0);
