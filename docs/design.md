@@ -110,6 +110,12 @@ first — a clean close never loses buffered records — and the
 semantics change with `SYNC_NONE`: unflushed bytes vanish exactly like
 any unsynced write would.
 
+**Read-side batching stays O(1) per key.** `tinykv_exists` answers
+from the index without touching the log, `tinykv_get_multi` takes the
+handle lock once for a whole batch, and `tinykv_iter_remaining` is a
+subtraction — the 1.5 read-side additions were shaped so callers can
+plan work without extra scans.
+
 **Checksums use a pinned table.** The CRC-32/ISO-HDLC lookup table is
 constant data in the binary — no lazy init race, no per-bit loop. The
 golden-vector tests still verify it against an independent
