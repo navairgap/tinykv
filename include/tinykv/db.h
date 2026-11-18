@@ -49,6 +49,9 @@ typedef struct {
     int create_if_missing;     /* default 1 */
     int read_only;             /* default 0 */
     int lock;                  /* exclusive flock on open for writes, default 1 */
+    /* Compact on close when dead bytes reach this share of the file
+     * (0.0-1.0). 0 disables; default 0. */
+    double auto_compact_dead_ratio;
 } tinykv_options;
 
 typedef struct {

@@ -1260,6 +1260,60 @@ static void test_prefix_iteration(void)
     tinykv_close(db);
 }
 
+static void test_auto_compact_on_close(void)
+{
+    char path[128];
+    tinykv_db *db = NULL;
+    tinykv_options options;
+    tinykv_stats stats;
+    char key[16], val[16];
+    int i;
+    db_path(path, sizeof(path), "autocompact.db");
+    options = tinykv_options_default_for_test();
+    options.sync = TINYKV_SYNC_NONE;
+    options.auto_compact_dead_ratio = 0.5; /* captured at open */
+    /* Fill, overwrite everything, delete half: mostly dead bytes. */
+    assert(tinykv_open(path, &options, &db) == TINYKV_OK);
+    for (i = 0; i < 300; ++i) {
+        snprintf(key, sizeof(key), "key-%04d", i);
+        snprintf(val, sizeof(val), "v1-%04d", i);
+        assert(tinykv_put(db, key, strlen(key), val, strlen(val)) == TINYKV_OK);
+    }
+    for (i = 0; i < 300; ++i) {
+        snprintf(key, sizeof(key), "key-%04d", i);
+        snprintf(val, sizeof(val), "v2-%04d", i);
+        assert(tinykv_put(db, key, strlen(key), val, strlen(val)) == TINYKV_OK);
+    }
+    for (i = 0; i < 300; i += 2) {
+        snprintf(key, sizeof(key), "key-%04d", i);
+        assert(tinykv_delete(db, key, strlen(key)) == TINYKV_OK);
+    }
+    options.auto_compact_dead_ratio = 0.5;
+    tinykv_close(db);
+
+    /* The closed file is compacted: dead bytes are gone, 150 survive. */
+    assert(tinykv_open(path, &options, &db) == TINYKV_OK);
+    assert(tinykv_get_stats(db, &stats) == TINYKV_OK);
+    assert(stats.records == 150);
+    assert(stats.dead_bytes == 0);
+    assert(stats.file_size == stats.live_bytes);
+    assert(stats.compactions == 0); /* the compact happened on the old handle */
+    tinykv_close(db);
+
+    /* Default options never compact on close. */
+    options.auto_compact_dead_ratio = 0.0;
+    assert(tinykv_open(path, &options, &db) == TINYKV_OK);
+    for (i = 101; i < 150; i += 2) { /* odd keys still live */
+        snprintf(key, sizeof(key), "key-%04d", i);
+        assert(tinykv_delete(db, key, strlen(key)) == TINYKV_OK);
+    }
+    tinykv_close(db);
+    assert(tinykv_open(path, &options, &db) == TINYKV_OK);
+    assert(tinykv_get_stats(db, &stats) == TINYKV_OK);
+    assert(stats.dead_bytes > 0);
+    tinykv_close(db);
+}
+
 int main(void)
 {
     assert(mkdtemp(temp_dir) != NULL);
@@ -1297,6 +1351,7 @@ int main(void)
     test_write_buffering_and_flush_points();
     test_explicit_sync_makes_none_durable();
     test_prefix_iteration();
+    test_auto_compact_on_close();
     remove_temp_dir();
     puts("tinykv db: all tests passed");
     return 0;

@@ -71,6 +71,9 @@ static tinykv_status options_check(const tinykv_options *options)
         options->sync != TINYKV_SYNC_ON_CLOSE &&
         options->sync != TINYKV_SYNC_EVERY_WRITE)
         return TINYKV_ERR_INVALID;
+    if (!(options->auto_compact_dead_ratio >= 0.0 &&
+          options->auto_compact_dead_ratio <= 1.0))
+        return TINYKV_ERR_INVALID; /* also rejects NaN */
     return TINYKV_OK;
 }
 
@@ -83,6 +86,7 @@ static tinykv_options options_default(void)
     defaults.create_if_missing = 1;
     defaults.read_only = 0;
     defaults.lock = 1;
+    defaults.auto_compact_dead_ratio = 0.0;
     return defaults;
 }
 
@@ -1048,6 +1052,19 @@ tinykv_status tinykv_close(tinykv_db *db)
         /* A clean close never loses buffered records: hand them to the
          * descriptor before syncing per policy. */
         (void)flush_wbuf(db);
+        /* Best-effort maintenance: reclaim when the dead share of the
+         * file crosses the configured ratio. Failures keep the close
+         * successful; the log stays valid either way. */
+        if (db->options.auto_compact_dead_ratio > 0.0) {
+            tinykv_stats stats;
+            if (tinykv_get_stats(db, &stats) == TINYKV_OK &&
+                stats.file_size > 0) {
+                double dead_ratio =
+                    (double)stats.dead_bytes / (double)stats.file_size;
+                if (dead_ratio >= db->options.auto_compact_dead_ratio)
+                    (void)tinykv_compact(db);
+            }
+        }
         if (db->options.sync == TINYKV_SYNC_ON_CLOSE)
             (void)tkv_fsync_file(db->fd);
     }
