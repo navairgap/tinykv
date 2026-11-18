@@ -70,6 +70,37 @@ static void test_write_pread_size_roundtrip(void)
     }
 }
 
+static void test_pwrite_all_is_positional(void)
+{
+    char path[128];
+    const uint8_t payload[] = {9, 8, 7, 6, 5};
+    int fd, other;
+    off_t before;
+    uint8_t out[5];
+    snprintf(path, sizeof(path), "%s/pwrite-target", temp_dir);
+    fd = tkv_open_log(path, 0, NULL);
+    assert(fd >= 0);
+    assert(tkv_write_all(fd, "abcde", 5) == 0);
+    before = lseek(fd, 0, SEEK_CUR);
+    /* Write at offset 2 must not disturb the descriptor position and
+     * must not clobber bytes before it. */
+    assert(tkv_pwrite_all(fd, payload, sizeof(payload), 2) == 0);
+    assert(lseek(fd, 0, SEEK_CUR) == before);
+    assert(tkv_pread_all(fd, out, 5, 0) == 0);
+    assert(out[0] == 'a' && out[1] == 'b');
+    assert(tkv_pread_all(fd, out, sizeof(payload), 2) == 0);
+    assert(memcmp(out, payload, sizeof(payload)) == 0);
+    /* Zero-length positional writes succeed and change nothing. */
+    assert(tkv_pwrite_all(fd, payload, 0, 100) == 0);
+    assert(tkv_file_size(fd) == 7);
+    /* Reads past the end still fail. */
+    other = tkv_open_log(path, 1, NULL);
+    assert(other >= 0);
+    assert(tkv_pread_all(other, out, 1, 100) == -1);
+    close(other);
+    close(fd);
+}
+
 static void test_lock_is_exclusive(void)
 {
     char path[128];
@@ -171,6 +202,7 @@ int main(void)
 {
     make_temp_dir();
     test_write_pread_size_roundtrip();
+    test_pwrite_all_is_positional();
     test_lock_is_exclusive();
     test_lock_blocks_other_processes();
     test_rename_sync_and_copy();
