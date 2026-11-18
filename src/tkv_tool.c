@@ -16,6 +16,7 @@ static void usage(FILE *stream)
           "  get <db> <key> [--raw]   print a value (--raw: no newline)\n"
           "  del <db> <key>           delete a key\n"
           "  list <db>                print key<TAB>value for every key\n"
+          "  keys <db> [prefix]       print live keys, optionally filtered\n"
           "  count <db>               print the number of live keys\n"
           "  stats <db> [--json]      print storage statistics\n"
           "  compact <db>             rewrite the log, dropping dead bytes\n"
@@ -157,6 +158,41 @@ static int cmd_list(int argc, char **argv)
     if (stdout_dead)
         return fprintf(stderr, "tinykv: write to stdout failed\n"), 6;
     if (status != TINYKV_OK) return report(argv[1], status), exit_code_for(status);
+    return 0;
+}
+
+/* Print live keys, optionally only those under a prefix. */
+static int cmd_keys(int argc, char **argv)
+{
+    tinykv_db *db = NULL;
+    tinykv_status status;
+    tinykv_iter *iter = NULL;
+    tinykv_options options;
+    const void *key = NULL, *value = NULL;
+    size_t klen = 0, vlen = 0;
+    if (argc < 2 || argc > 3) return usage(stderr), 1;
+    read_only_options(&options);
+    status = tinykv_open(argv[1], &options, &db);
+    if (status != TINYKV_OK) return report(argv[1], status), exit_code_for(status);
+    if (argc == 3)
+        status = tinykv_iter_new_prefix(db, argv[2], strlen(argv[2]), &iter);
+    else
+        status = tinykv_iter_new(db, &iter);
+    if (status != TINYKV_OK) {
+        report(argv[1], status);
+        tinykv_close(db);
+        return exit_code_for(status);
+    }
+    while (tinykv_iter_next(iter, &key, &klen, &value, &vlen) == TINYKV_OK &&
+           key != NULL) {
+        emit(key, klen);
+        if (putchar('\n') == EOF) stdout_dead = 1;
+        if (stdout_dead) break;
+    }
+    tinykv_iter_free(iter);
+    tinykv_close(db);
+    if (stdout_dead)
+        return fprintf(stderr, "tinykv: write to stdout failed\n"), 6;
     return 0;
 }
 
@@ -458,6 +494,7 @@ int main(int argc, char **argv)
     else if (strcmp(argv[1], "del") == 0 || strcmp(argv[1], "delete") == 0)
         result = cmd_delete(argc - 1, argv + 1);
     else if (strcmp(argv[1], "list") == 0) result = cmd_list(argc - 1, argv + 1);
+    else if (strcmp(argv[1], "keys") == 0) result = cmd_keys(argc - 1, argv + 1);
     else if (strcmp(argv[1], "count") == 0) result = cmd_count(argc - 1, argv + 1);
     else if (strcmp(argv[1], "stats") == 0) result = cmd_stats(argc - 1, argv + 1);
     else if (strcmp(argv[1], "compact") == 0) result = cmd_compact(argc - 1, argv + 1);

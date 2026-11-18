@@ -14,6 +14,11 @@ raw=$("$TOOL" get "$db" greeting --raw | od -An -c | tr -d ' \n')
 test "$raw" = 'hello' # --raw adds no trailing newline
 test "$("$TOOL" count "$db")" = 2
 test "$("$TOOL" list "$db")" = "$(printf 'greeting\thello\nuser\tnaveen')"
+test "$("$TOOL" keys "$db")" = "$(printf 'greeting\nuser')"
+printf 'prefix:one\t1\nprefix:two\t2\n' | "$TOOL" batch "$db" > /dev/null
+test "$("$TOOL" keys "$db" 'prefix:')" = "$(printf 'prefix:one\nprefix:two')"
+"$TOOL" del "$db" prefix:one
+"$TOOL" del "$db" prefix:two
 "$TOOL" verify "$db"
 "$TOOL" compact "$db"
 "$TOOL" verify "$db"
