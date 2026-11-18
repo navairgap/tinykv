@@ -1493,6 +1493,31 @@ static void test_auto_compact_threshold_boundary(void)
     tinykv_close(db);
 }
 
+static void test_get_multi_under_concurrent_deletes(void)
+{
+    char path[128];
+    tinykv_db *db = NULL;
+    tinykv_get_result requests[3];
+    size_t i;
+    db_path(path, sizeof(path), "multi-delete.db");
+    assert(tinykv_open(path, NULL, &db) == TINYKV_OK);
+    assert(tinykv_put(db, "a", 1, "1", 1) == TINYKV_OK);
+    assert(tinykv_put(db, "b", 1, "2", 1) == TINYKV_OK);
+    assert(tinykv_put(db, "c", 1, "3", 1) == TINYKV_OK);
+    /* Delete between building the request list and the batch: entries
+     * must reflect the state at execution time, not request time. */
+    requests[0].key = "a"; requests[0].key_length = 1;
+    requests[1].key = "b"; requests[1].key_length = 1;
+    requests[2].key = "c"; requests[2].key_length = 1;
+    assert(tinykv_delete(db, "b", 1) == TINYKV_OK);
+    assert(tinykv_get_multi(db, requests, 3) == TINYKV_ERR_NOT_FOUND);
+    assert(requests[0].status == TINYKV_OK);
+    assert(requests[1].status == TINYKV_ERR_NOT_FOUND);
+    assert(requests[2].status == TINYKV_OK);
+    for (i = 0; i < 3; ++i) free(requests[i].value);
+    tinykv_close(db);
+}
+
 int main(void)
 {
     assert(mkdtemp(temp_dir) != NULL);
@@ -1537,6 +1562,7 @@ int main(void)
     test_iter_remaining_tracks_progress();
     test_get_multi_resolves_batches();
     test_auto_compact_threshold_boundary();
+    test_get_multi_under_concurrent_deletes();
     remove_temp_dir();
     puts("tinykv db: all tests passed");
     return 0;
