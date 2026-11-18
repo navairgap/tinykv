@@ -122,6 +122,11 @@ tinykv_status tinykv_iter_new_prefix(const tinykv_db *db, const void *prefix,
 tinykv_status tinykv_iter_next(tinykv_iter *iter, const void **out_key,
                                size_t *out_key_length, const void **out_value,
                                size_t *out_value_length);
+/* Upper bound on keys this iterator will still produce: the snapshot
+ * size minus attempted steps. Mid-iteration deletes can make it an
+ * overestimate, never an underestimate. */
+tinykv_status tinykv_iter_remaining(const tinykv_iter *iter,
+                                    uint64_t *out_remaining);
 void tinykv_iter_free(tinykv_iter *iter);
 
 /* Validate a log without opening it for writes. *out_last_good_offset

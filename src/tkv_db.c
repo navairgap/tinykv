@@ -1032,6 +1032,14 @@ tinykv_status tinykv_iter_next(tinykv_iter *iter, const void **out_key,
     return TINYKV_OK;
 }
 
+tinykv_status tinykv_iter_remaining(const tinykv_iter *iter,
+                                    uint64_t *out_remaining)
+{
+    if (iter == NULL || out_remaining == NULL) return TINYKV_ERR_INVALID;
+    *out_remaining = (uint64_t)(iter->count - iter->position);
+    return TINYKV_OK;
+}
+
 void tinykv_iter_free(tinykv_iter *iter)
 {
     size_t i;

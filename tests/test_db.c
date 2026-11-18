@@ -1398,6 +1398,40 @@ static void test_exists_checks_presence_only(void)
     tinykv_close(db);
 }
 
+static void test_iter_remaining_tracks_progress(void)
+{
+    char path[128];
+    tinykv_db *db = NULL;
+    tinykv_iter *iter = NULL;
+    const void *key = NULL, *value = NULL;
+    size_t klen = 0, vlen = 0;
+    uint64_t remaining = 0;
+    db_path(path, sizeof(path), "remaining.db");
+    assert(tinykv_open(path, NULL, &db) == TINYKV_OK);
+    assert(tinykv_put(db, "a", 1, "1", 1) == TINYKV_OK);
+    assert(tinykv_put(db, "b", 1, "2", 1) == TINYKV_OK);
+    assert(tinykv_put(db, "c", 1, "3", 1) == TINYKV_OK);
+    assert(tinykv_iter_new(db, &iter) == TINYKV_OK);
+    assert(tinykv_iter_remaining(iter, &remaining) == TINYKV_OK);
+    assert(remaining == 3);
+    assert(tinykv_iter_next(iter, &key, &klen, &value, &vlen) == TINYKV_OK);
+    assert(tinykv_iter_remaining(iter, &remaining) == TINYKV_OK);
+    assert(remaining == 2);
+    assert(tinykv_delete(db, "b", 1) == TINYKV_OK);
+    /* The skipped key is attempted, so remaining is an upper bound. */
+    assert(tinykv_iter_next(iter, &key, &klen, &value, &vlen) == TINYKV_OK);
+    assert(*(const char *)key == 'c');
+    assert(tinykv_iter_remaining(iter, &remaining) == TINYKV_OK);
+    assert(remaining == 0);
+    assert(tinykv_iter_next(iter, &key, &klen, &value, &vlen) == TINYKV_OK);
+    assert(key == NULL);
+    assert(tinykv_iter_remaining(iter, &remaining) == TINYKV_OK);
+    assert(remaining == 0);
+    tinykv_iter_free(iter);
+    assert(tinykv_iter_remaining(NULL, &remaining) == TINYKV_ERR_INVALID);
+    tinykv_close(db);
+}
+
 int main(void)
 {
     assert(mkdtemp(temp_dir) != NULL);
@@ -1439,6 +1473,7 @@ int main(void)
     test_buffered_sync_compact_interactions();
     test_iteration_across_compaction();
     test_exists_checks_presence_only();
+    test_iter_remaining_tracks_progress();
     remove_temp_dir();
     puts("tinykv db: all tests passed");
     return 0;
