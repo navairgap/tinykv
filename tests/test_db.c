@@ -1460,6 +1460,39 @@ static void test_get_multi_resolves_batches(void)
     tinykv_close(db);
 }
 
+static void test_auto_compact_threshold_boundary(void)
+{
+    char path[128];
+    tinykv_db *db = NULL;
+    tinykv_options options;
+    tinykv_stats stats;
+    /* Build a log whose dead share is exactly one half, then probe the
+     * ratio from just below to just above the threshold. */
+    options = tinykv_options_default_for_test();
+    options.sync = TINYKV_SYNC_NONE;
+    db_path(path, sizeof(path), "threshold.db");
+    assert(tinykv_open(path, &options, &db) == TINYKV_OK);
+    assert(tinykv_put(db, "alpha", 5, "one", 3) == TINYKV_OK); /* 25 live */
+    assert(tinykv_put(db, "beta", 4, "two", 3) == TINYKV_OK);  /* +24 */
+    assert(tinykv_delete(db, "beta", 4) == TINYKV_OK);         /* +21 dead */
+    /* file 70 bytes, live 25, dead 45: ratio 45/70 ~= 0.643 */
+    assert(tinykv_close(db) == TINYKV_OK);
+
+    options.auto_compact_dead_ratio = 0.65; /* just above: no compaction */
+    assert(tinykv_open(path, &options, &db) == TINYKV_OK);
+    assert(tinykv_get_stats(db, &stats) == TINYKV_OK);
+    assert(stats.dead_bytes == 45);
+    assert(tinykv_close(db) == TINYKV_OK);
+
+    options.auto_compact_dead_ratio = 0.5; /* at/below: compact on close */
+    assert(tinykv_open(path, &options, &db) == TINYKV_OK);
+    assert(tinykv_close(db) == TINYKV_OK);
+    assert(tinykv_open(path, &options, &db) == TINYKV_OK);
+    assert(tinykv_get_stats(db, &stats) == TINYKV_OK);
+    assert(stats.dead_bytes == 0 && stats.records == 1);
+    tinykv_close(db);
+}
+
 int main(void)
 {
     assert(mkdtemp(temp_dir) != NULL);
@@ -1503,6 +1536,7 @@ int main(void)
     test_exists_checks_presence_only();
     test_iter_remaining_tracks_progress();
     test_get_multi_resolves_batches();
+    test_auto_compact_threshold_boundary();
     remove_temp_dir();
     puts("tinykv db: all tests passed");
     return 0;
