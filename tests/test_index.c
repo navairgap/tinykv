@@ -132,6 +132,8 @@ static void test_foreach_visits_live_entries_once(void)
     assert(state.max_offset == 99);
     tkv_index_clear(&index);
     assert(tkv_index_count(&index) == 0);
+    /* Clearing must release the grown table, not just its keys. */
+    assert(index.capacity == 64u); /* initial capacity */
     state.seen = 0;
     tkv_index_foreach(&index, visit_counter, &state);
     assert(state.seen == 0);

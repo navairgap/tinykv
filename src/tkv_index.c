@@ -46,12 +46,15 @@ void tkv_index_clear(tkv_index *index)
 {
     size_t i;
     if (index == NULL || index->buckets == NULL) return;
-    for (i = 0; i < index->capacity; ++i) {
+    for (i = 0; i < index->capacity; ++i)
         free(index->buckets[i].key);
-        index->buckets[i].key = NULL;
+    free(index->buckets);
+    /* Restart from the initial capacity: a cleared index should not
+     * keep a large table it grew for data that is gone. */
+    if (tkv_index_init(index) != 0) {
+        index->buckets = NULL;
+        index->capacity = index->live = index->used = 0;
     }
-    memset(index->buckets, 0, index->capacity * sizeof(tkv_entry));
-    index->live = index->used = 0;
 }
 
 size_t tkv_index_count(const tkv_index *index)
