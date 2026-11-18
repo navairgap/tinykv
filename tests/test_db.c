@@ -1382,6 +1382,22 @@ static void test_iteration_across_compaction(void)
     tinykv_close(db);
 }
 
+static void test_exists_checks_presence_only(void)
+{
+    char path[128];
+    tinykv_db *db = NULL;
+    db_path(path, sizeof(path), "exists.db");
+    assert(tinykv_open(path, NULL, &db) == TINYKV_OK);
+    assert(tinykv_exists(db, "alpha", 5) == TINYKV_ERR_NOT_FOUND);
+    assert(tinykv_put(db, "alpha", 5, "one", 3) == TINYKV_OK);
+    assert(tinykv_exists(db, "alpha", 5) == TINYKV_OK);
+    assert(tinykv_delete(db, "alpha", 5) == TINYKV_OK);
+    assert(tinykv_exists(db, "alpha", 5) == TINYKV_ERR_NOT_FOUND);
+    assert(tinykv_exists(db, NULL, 3) == TINYKV_ERR_INVALID);
+    assert(tinykv_exists(db, NULL, 0) == TINYKV_ERR_NOT_FOUND);
+    tinykv_close(db);
+}
+
 int main(void)
 {
     assert(mkdtemp(temp_dir) != NULL);
@@ -1422,6 +1438,7 @@ int main(void)
     test_auto_compact_on_close();
     test_buffered_sync_compact_interactions();
     test_iteration_across_compaction();
+    test_exists_checks_presence_only();
     remove_temp_dir();
     puts("tinykv db: all tests passed");
     return 0;

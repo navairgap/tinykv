@@ -97,6 +97,10 @@ tinykv_status tinykv_compact(tinykv_db *db);
  * Read-only handles return TINYKV_ERR_INVALID (nothing to sync). */
 tinykv_status tinykv_sync(tinykv_db *db);
 
+/* Key presence check without reading or copying any value. */
+tinykv_status tinykv_exists(const tinykv_db *db, const void *key,
+                            size_t key_length);
+
 tinykv_status tinykv_count(const tinykv_db *db, uint64_t *out_count);
 tinykv_status tinykv_get_stats(const tinykv_db *db, tinykv_stats *out_stats);
 /* Path the handle was opened with; *out_path is a borrowed pointer

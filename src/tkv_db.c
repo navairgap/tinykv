@@ -475,6 +475,21 @@ static void add_entry_memory(tkv_entry *entry, void *user)
     state->total += (uint64_t)entry->key_length + 1;
 }
 
+tinykv_status tinykv_exists(const tinykv_db *db, const void *key,
+                            size_t key_length)
+{
+    tinykv_status status;
+    if (db == NULL || db->fd < 0) return TINYKV_ERR_INVALID;
+    if (key == NULL && key_length != 0) return TINYKV_ERR_INVALID;
+    tkv_mutex_lock(handle_mutex(db));
+    status = tkv_index_find(&db->index, (const uint8_t *)key, key_length) !=
+                     NULL
+                 ? TINYKV_OK
+                 : TINYKV_ERR_NOT_FOUND;
+    tkv_mutex_unlock(handle_mutex(db));
+    return status;
+}
+
 tinykv_status tinykv_sync(tinykv_db *db)
 {
     tinykv_status status;
