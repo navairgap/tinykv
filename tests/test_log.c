@@ -299,6 +299,41 @@ static void test_scan_survives_every_truncation(void)
     close(fd);
 }
 
+static int abort_after_first(const tinykv_record_view *view, uint64_t offset,
+                             void *user)
+{
+    int *seen = (int *)user;
+    (void)view;
+    (void)offset;
+    (*seen)++;
+    return 1; /* stop the scan cleanly after the first record */
+}
+
+static void test_scan_callback_can_abort(void)
+{
+    char path[128];
+    tkv_log_limits limits = {64, 1024};
+    tkv_log_scan_result result;
+    int seen = 0;
+    uint64_t offset;
+    size_t length;
+    int fd;
+    snprintf(path, sizeof(path), "%s/abort.log", temp_dir);
+    fd = tkv_open_log(path, 0, NULL);
+    assert(fd >= 0);
+    assert(tkv_log_append(fd, TINYKV_RECORD_PUT, "alpha", 5, "one", 3,
+                          &limits, &offset, &length) == 0);
+    assert(tkv_log_append(fd, TINYKV_RECORD_PUT, "beta", 4, "two", 3,
+                          &limits, &offset, &length) == 0);
+    assert(tkv_log_scan(fd, &limits, abort_after_first, &seen, &result) == 0);
+    assert(seen == 1);
+    assert(result.callback_aborted == 1);
+    assert(result.stop_offset == 0); /* aborted at the first record */
+    assert(result.last_good_offset == 0);
+    assert(result.tail_truncated == 0);
+    close(fd);
+}
+
 int main(void)
 {
     assert(mkdtemp(temp_dir) != NULL);
@@ -310,6 +345,7 @@ int main(void)
     test_scan_handles_records_larger_than_chunk();
     test_append_rejects_bad_input();
     test_scan_survives_every_truncation();
+    test_scan_callback_can_abort();
     remove_temp_dir();
     puts("tinykv log: all tests passed");
     return 0;
