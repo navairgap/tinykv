@@ -1,4 +1,4 @@
-# Checksum interoperability golden vectors (proposed)
+# Checksum interoperability golden vectors
 
 TinyKV's proposed record format uses CRC-32/ISO-HDLC over the record type, lengths, key bytes, and value bytes. Implementations need fixed vectors so the checksum definition is testable across languages.
 
@@ -24,4 +24,4 @@ Include put records with empty and non-empty values, delete records with empty v
 
 ## Validation cases
 
-Tests should reject a one-bit change to the checksum input, a byte-order reversal of the stored checksum, a checksum computed over the magic field, and a checksum that accidentally includes the checksum field. The on-disk format remains a proposal until implementation and fixture tests exist.
+Tests should reject a one-bit change to the checksum input, a byte-order reversal of the stored checksum, a checksum computed over the magic field, and a checksum that accidentally includes the checksum field. The on-disk format is implemented and pinned by tests/test_golden.c, which verifies every case below against an independent table-driven CRC implementation.

@@ -1,4 +1,4 @@
-# Non-destructive append-log repair (proposed)
+# Non-destructive append-log repair
 
 Recovery and repair are different operations. Normal database open should report corruption and must not silently rewrite a user's data. Repair should be an explicit operator action.
 
@@ -21,4 +21,4 @@ If backup, sync, or verification fails, leave the original untouched. Record the
 
 ## Tests
 
-Use temporary files only. Cover truncated header, truncated payload, invalid checksum in the middle, invalid record length, failed backup, failed sync, interrupted output, and a verified successful repair. No test should modify a real database path.
+Use temporary files only. Cover truncated header, truncated payload, invalid checksum in the middle, invalid record length, failed backup, failed sync, interrupted output, and a verified successful repair. No test should modify a real database path. The workflow is implemented by tinykv_repair and the tinykv repair CLI, with tests/test_db.c covering each case.
