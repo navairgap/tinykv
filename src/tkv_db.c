@@ -2,6 +2,7 @@
 #include "tkv_index.h"
 #include "tkv_io.h"
 #include "tkv_log.h"
+#include "tkv_mutex.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <stdlib.h>
@@ -14,6 +15,7 @@
 #define TINYKV_PATH_MAX 4096
 
 struct tinykv_db {
+    tkv_mutex mutex;
     char *path;
     int fd;
     int lock_fd;
@@ -32,6 +34,13 @@ struct tinykv_db {
 /* Appends accumulate here so bulk loads pay syscalls per 64 KiB instead
  * of per record; reads, syncs, and close flush first. */
 #define TINYKV_WRITE_BUFFER 65536u
+
+/* Locking is logically const: read APIs mutate only cache state, so the
+ * const surface stays intact for callers. */
+static tkv_mutex *handle_mutex(const tinykv_db *db)
+{
+    return (tkv_mutex *)&db->mutex;
+}
 
 const char *tinykv_status_string(tinykv_status status)
 {
@@ -244,8 +253,11 @@ tinykv_status tinykv_put(tinykv_db *db, const void *key, size_t key_length,
         write_arguments_status(db, key, key_length, value, value_length);
     if (status != TINYKV_OK) return status;
     if (db->options.read_only) return TINYKV_ERR_INVALID;
-    return write_record(db, TINYKV_RECORD_PUT, key, key_length, value,
-                        value_length);
+    tkv_mutex_lock(&db->mutex);
+    status = write_record(db, TINYKV_RECORD_PUT, key, key_length, value,
+                          value_length);
+    tkv_mutex_unlock(&db->mutex);
+    return status;
 }
 
 tinykv_status tinykv_delete(tinykv_db *db, const void *key, size_t key_length)
@@ -254,9 +266,14 @@ tinykv_status tinykv_delete(tinykv_db *db, const void *key, size_t key_length)
         write_arguments_status(db, key, key_length, NULL, 0);
     if (status != TINYKV_OK) return status;
     if (db->options.read_only) return TINYKV_ERR_INVALID;
-    if (tkv_index_find(&db->index, (const uint8_t *)key, key_length) == NULL)
+    tkv_mutex_lock(&db->mutex);
+    if (tkv_index_find(&db->index, (const uint8_t *)key, key_length) == NULL) {
+        tkv_mutex_unlock(&db->mutex);
         return TINYKV_ERR_NOT_FOUND;
-    return write_record(db, TINYKV_RECORD_DELETE, key, key_length, NULL, 0);
+    }
+    status = write_record(db, TINYKV_RECORD_DELETE, key, key_length, NULL, 0);
+    tkv_mutex_unlock(&db->mutex);
+    return status;
 }
 
 tinykv_status tinykv_get(const tinykv_db *db, const void *key,
@@ -278,17 +295,28 @@ tinykv_status tinykv_get(const tinykv_db *db, const void *key,
     if (db == NULL || db->fd < 0 || (key == NULL && key_length != 0))
         return TINYKV_ERR_INVALID;
 
+    tkv_mutex_lock(handle_mutex(db));
     entry = tkv_index_find(&db->index, (const uint8_t *)key, key_length);
-    if (entry == NULL) return TINYKV_ERR_NOT_FOUND;
+    if (entry == NULL) {
+        tkv_mutex_unlock(handle_mutex(db));
+        return TINYKV_ERR_NOT_FOUND;
+    }
 
     flush_status = flush_for_read(db, entry->offset, entry->record_length);
-    if (flush_status != TINYKV_OK) return flush_status;
+    if (flush_status != TINYKV_OK) {
+        tkv_mutex_unlock(handle_mutex(db));
+        return flush_status;
+    }
 
     record = (uint8_t *)malloc(entry->record_length);
-    if (record == NULL) return TINYKV_ERR_NOMEM;
+    if (record == NULL) {
+        tkv_mutex_unlock(handle_mutex(db));
+        return TINYKV_ERR_NOMEM;
+    }
     if (tkv_pread_all(db->fd, record, entry->record_length,
                       entry->offset) != 0) {
         free(record);
+        tkv_mutex_unlock(handle_mutex(db));
         return TINYKV_ERR_IO;
     }
     status = tinykv_record_decode(record, entry->record_length,
@@ -299,11 +327,13 @@ tinykv_status tinykv_get(const tinykv_db *db, const void *key,
         view.key_length != key_length ||
         (key_length != 0 && memcmp(view.key, key, key_length) != 0)) {
         free(record);
+        tkv_mutex_unlock(handle_mutex(db));
         return TINYKV_ERR_CORRUPT;
     }
     value = malloc(view.value_length ? view.value_length : 1);
     if (value == NULL) {
         free(record);
+        tkv_mutex_unlock(handle_mutex(db));
         return TINYKV_ERR_NOMEM;
     }
     if (view.value_length != 0)
@@ -311,12 +341,14 @@ tinykv_status tinykv_get(const tinykv_db *db, const void *key,
     free(record);
     *out_value = value;
     *out_value_length = view.value_length;
+    tkv_mutex_unlock(handle_mutex(db));
     return TINYKV_OK;
 }
 
 static void db_free(tinykv_db *db)
 {
     if (db == NULL) return;
+    tkv_mutex_destroy(&db->mutex);
     tkv_index_free(&db->index);
     free(db->wbuf);
     free(db->path);
@@ -370,6 +402,10 @@ tinykv_status tinykv_open(const char *path, const tinykv_options *options,
         limits.max_value_length = effective.max_value_length;
         db = (tinykv_db *)calloc(1, sizeof(*db));
         if (db == NULL) {
+            status = TINYKV_ERR_NOMEM;
+            goto fail;
+        }
+        if (tkv_mutex_init(&db->mutex) != 0) {
             status = TINYKV_ERR_NOMEM;
             goto fail;
         }
@@ -431,6 +467,7 @@ tinykv_status tinykv_get_stats(const tinykv_db *db, tinykv_stats *out_stats)
 {
     struct bytes_state bytes = {0};
     if (db == NULL || out_stats == NULL) return TINYKV_ERR_INVALID;
+    tkv_mutex_lock(handle_mutex(db));
     memset(out_stats, 0, sizeof(*out_stats));
     tkv_index_foreach(&db->index, add_record_bytes, &bytes);
     out_stats->records = (uint64_t)tkv_index_count(&db->index);
@@ -444,6 +481,7 @@ tinykv_status tinykv_get_stats(const tinykv_db *db, tinykv_stats *out_stats)
     out_stats->puts = db->puts;
     out_stats->deletes = db->deletes;
     out_stats->compactions = db->compactions;
+    tkv_mutex_unlock(handle_mutex(db));
     return TINYKV_OK;
 }
 
@@ -521,10 +559,17 @@ tinykv_status tinykv_compact(tinykv_db *db)
         0)
         return TINYKV_ERR_INVALID;
 
+    tkv_mutex_lock(&db->mutex);
     status = reclaim_torn_tail(db);
-    if (status != TINYKV_OK) return status;
+    if (status != TINYKV_OK) {
+        tkv_mutex_unlock(&db->mutex);
+        return status;
+    }
     status = flush_wbuf(db); /* reads below pread the flushed region */
-    if (status != TINYKV_OK) return status;
+    if (status != TINYKV_OK) {
+        tkv_mutex_unlock(&db->mutex);
+        return status;
+    }
 
     memset(&state, 0, sizeof(state));
     state.db = db;
@@ -540,6 +585,7 @@ tinykv_status tinykv_compact(tinykv_db *db)
         close(tmp_fd);
         (void)unlink(tmp_path);
         free(state.list);
+        tkv_mutex_unlock(&db->mutex);
         return TINYKV_ERR_IO;
     }
     close(tmp_fd);
@@ -548,12 +594,14 @@ tinykv_status tinykv_compact(tinykv_db *db)
     if (tkv_rename_sync(tmp_path, db->path) != 0) {
         (void)unlink(tmp_path);
         free(state.list);
+        tkv_mutex_unlock(&db->mutex);
         return TINYKV_ERR_IO;
     }
     close(db->fd);
     db->fd = tkv_open_log(db->path, 0, NULL);
     if (db->fd < 0) {
         free(state.list);
+        tkv_mutex_unlock(&db->mutex);
         return TINYKV_ERR_IO;
     }
     /* Only now repoint the index at the compacted layout. */
@@ -564,6 +612,7 @@ tinykv_status tinykv_compact(tinykv_db *db)
     db->flushed_size = state.offset;
     db->wlen = 0;
     db->compactions++;
+    tkv_mutex_unlock(&db->mutex);
     return TINYKV_OK;
 }
 
@@ -752,19 +801,32 @@ tinykv_status tinykv_get_into(const tinykv_db *db, const void *key,
         (buffer == NULL && capacity != 0))
         return TINYKV_ERR_INVALID;
 
+    tkv_mutex_lock(handle_mutex(db));
     entry = tkv_index_find(&db->index, (const uint8_t *)key, key_length);
-    if (entry == NULL) return TINYKV_ERR_NOT_FOUND;
+    if (entry == NULL) {
+        tkv_mutex_unlock(handle_mutex(db));
+        return TINYKV_ERR_NOT_FOUND;
+    }
     *out_value_length = entry->value_length;
-    if (entry->value_length > capacity) return TINYKV_ERR_LIMIT;
-
+    if (entry->value_length > capacity) {
+        tkv_mutex_unlock(handle_mutex(db));
+        return TINYKV_ERR_LIMIT;
+    }
     flush_status = flush_for_read(db, entry->offset, entry->record_length);
-    if (flush_status != TINYKV_OK) return flush_status;
+    if (flush_status != TINYKV_OK) {
+        tkv_mutex_unlock(handle_mutex(db));
+        return flush_status;
+    }
 
     record = (uint8_t *)malloc(entry->record_length);
-    if (record == NULL) return TINYKV_ERR_NOMEM;
+    if (record == NULL) {
+        tkv_mutex_unlock(handle_mutex(db));
+        return TINYKV_ERR_NOMEM;
+    }
     if (tkv_pread_all(db->fd, record, entry->record_length,
                       entry->offset) != 0) {
         free(record);
+        tkv_mutex_unlock(handle_mutex(db));
         return TINYKV_ERR_IO;
     }
     status = tinykv_record_decode(record, entry->record_length,
@@ -775,11 +837,13 @@ tinykv_status tinykv_get_into(const tinykv_db *db, const void *key,
         view.key_length != key_length ||
         (key_length != 0 && memcmp(view.key, key, key_length) != 0)) {
         free(record);
+        tkv_mutex_unlock(handle_mutex(db));
         return TINYKV_ERR_CORRUPT;
     }
     if (view.value_length != 0)
         memcpy(buffer, view.value, view.value_length);
     free(record);
+    tkv_mutex_unlock(handle_mutex(db));
     return TINYKV_OK;
 }
 
@@ -839,7 +903,9 @@ tinykv_status tinykv_iter_new(const tinykv_db *db, tinykv_iter **out_iter)
         free(iter);
         return TINYKV_ERR_NOMEM;
     }
+    tkv_mutex_lock(handle_mutex(db));
     tkv_index_foreach(&db->index, iter_collect, iter);
+    tkv_mutex_unlock(handle_mutex(db));
     if (iter->count != index_count) {
         tinykv_iter_free(iter);
         return TINYKV_ERR_NOMEM;
@@ -863,6 +929,7 @@ tinykv_status tinykv_iter_next(tinykv_iter *iter, const void **out_key,
     iter->value = NULL;
     iter->value_length = 0;
 
+    tkv_mutex_lock(&iter->db->mutex);
     while (iter->position < iter->count) {
         struct iter_key *current = &iter->keys[iter->position++];
         void *value = NULL;
@@ -871,19 +938,24 @@ tinykv_status tinykv_iter_next(tinykv_iter *iter, const void **out_key,
                             &value, &value_length);
         if (status == TINYKV_ERR_NOT_FOUND)
             continue; /* deleted since the snapshot: skip */
-        if (status != TINYKV_OK) return status;
+        if (status != TINYKV_OK) {
+            tkv_mutex_unlock(&iter->db->mutex);
+            return status;
+        }
         iter->value = (uint8_t *)value;
         iter->value_length = value_length;
         *out_key = current->key;
         *out_key_length = current->key_length;
         *out_value = iter->value;
         *out_value_length = value_length;
+        tkv_mutex_unlock(&iter->db->mutex);
         return TINYKV_OK;
     }
     *out_key = NULL;
     *out_key_length = 0;
     *out_value = NULL;
     *out_value_length = 0;
+    tkv_mutex_unlock(&iter->db->mutex);
     return TINYKV_OK;
 }
 
@@ -901,27 +973,34 @@ void tinykv_iter_free(tinykv_iter *iter)
 tinykv_status tinykv_path(const tinykv_db *db, const char **out_path)
 {
     if (db == NULL || out_path == NULL) return TINYKV_ERR_INVALID;
+    tkv_mutex_lock(handle_mutex(db));
     *out_path = db->path;
+    tkv_mutex_unlock(handle_mutex(db));
     return TINYKV_OK;
 }
 
 tinykv_status tinykv_file_size(const tinykv_db *db, uint64_t *out_size)
 {
     if (db == NULL || out_size == NULL) return TINYKV_ERR_INVALID;
+    tkv_mutex_lock(handle_mutex(db));
     *out_size = db->file_size;
+    tkv_mutex_unlock(handle_mutex(db));
     return TINYKV_OK;
 }
 
 tinykv_status tinykv_count(const tinykv_db *db, uint64_t *out_count)
 {
     if (db == NULL || out_count == NULL) return TINYKV_ERR_INVALID;
+    tkv_mutex_lock(handle_mutex(db));
     *out_count = (uint64_t)tkv_index_count(&db->index);
+    tkv_mutex_unlock(handle_mutex(db));
     return TINYKV_OK;
 }
 
 tinykv_status tinykv_close(tinykv_db *db)
 {
     if (db == NULL) return TINYKV_OK;
+    tkv_mutex_lock(&db->mutex);
     if (db->fd >= 0 && !db->options.read_only) {
         /* A clean close never loses buffered records: hand them to the
          * descriptor before syncing per policy. */
@@ -929,6 +1008,7 @@ tinykv_status tinykv_close(tinykv_db *db)
         if (db->options.sync == TINYKV_SYNC_ON_CLOSE)
             (void)tkv_fsync_file(db->fd);
     }
+    tkv_mutex_unlock(&db->mutex);
     if (db->lock_fd >= 0) {
         tkv_unlock(db->lock_fd);
         close(db->lock_fd);

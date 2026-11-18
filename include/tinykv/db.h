@@ -4,8 +4,9 @@
  * plus an in-memory hash index. One process opens a database read-write at
  * a time; readers may open it read-only concurrently.
  *
- * The library is not thread-safe: guard a handle with your own locking if
- * multiple threads use it.
+ * Handles are internally serialized, so one handle is safe to share
+ * across threads. Embedders who prefer to serialize externally (or have
+ * no pthreads) can build with -DTINYKV_NO_THREADS.
  */
 #ifndef TINYKV_DB_H
 #define TINYKV_DB_H
