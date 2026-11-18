@@ -17,6 +17,7 @@ test "$("$TOOL" list "$db")" = "$(printf 'greeting\thello\nuser\tnaveen')"
 test "$("$TOOL" keys "$db")" = "$(printf 'greeting\nuser')"
 printf 'prefix:one\t1\nprefix:two\t2\n' | "$TOOL" batch "$db" > /dev/null
 test "$("$TOOL" keys "$db" 'prefix:')" = "$(printf 'prefix:one\nprefix:two')"
+test "$("$TOOL" list "$db" 'prefix:')" = "$(printf 'prefix:one\t1\nprefix:two\t2')"
 "$TOOL" del "$db" prefix:one
 "$TOOL" del "$db" prefix:two
 "$TOOL" verify "$db"
@@ -25,7 +26,7 @@ test "$("$TOOL" keys "$db" 'prefix:')" = "$(printf 'prefix:one\nprefix:two')"
 "$TOOL" stats "$db" --json > "$work/stats.json"
 grep -q '"records": 2' "$work/stats.json"
 grep -q '"index_memory_bytes"' "$work/stats.json"
-grep -q '"version": "1.0.0"' "$work/stats.json"
+grep -q '"version": "1.5.0"' "$work/stats.json"
 "$TOOL" del "$db" user
 if "$TOOL" get "$db" user; then
     echo "smoke: get of a deleted key must fail" >&2

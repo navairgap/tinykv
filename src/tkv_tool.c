@@ -15,7 +15,7 @@ static void usage(FILE *stream)
           "  put <db> <key> <value>   store a value (NUL-free strings)\n"
           "  get <db> <key> [--raw]   print a value (--raw: no newline)\n"
           "  del <db> <key>           delete a key\n"
-          "  list <db>                print key<TAB>value for every key\n"
+          "  list <db> [prefix]       print key<TAB>value, optionally filtered\n"
           "  keys <db> [prefix]       print live keys, optionally filtered\n"
           "  count <db>               print the number of live keys\n"
           "  stats <db> [--json]      print storage statistics\n"
@@ -136,16 +136,14 @@ static int cmd_list(int argc, char **argv)
     tinykv_options options;
     const void *key = NULL, *value = NULL;
     size_t klen = 0, vlen = 0;
-    if (argc != 2) return usage(stderr), 1;
-    options.max_key_length = 4096;
-    options.max_value_length = 1048576;
-    options.sync = TINYKV_SYNC_EVERY_WRITE;
-    options.create_if_missing = 0;
-    options.read_only = 1;
-    options.lock = 0;
+    if (argc < 2 || argc > 3) return usage(stderr), 1;
+    read_only_options(&options);
     status = tinykv_open(argv[1], &options, &db);
     if (status != TINYKV_OK) return report(argv[1], status), exit_code_for(status);
-    status = tinykv_iter_new(db, &iter);
+    if (argc == 3)
+        status = tinykv_iter_new_prefix(db, argv[2], strlen(argv[2]), &iter);
+    else
+        status = tinykv_iter_new(db, &iter);
     if (status == TINYKV_OK) {
         while (tinykv_iter_next(iter, &key, &klen, &value, &vlen) == TINYKV_OK &&
                key != NULL) {
