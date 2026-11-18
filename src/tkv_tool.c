@@ -251,6 +251,7 @@ static int cmd_stats(int argc, char **argv)
                "  \"puts\": %llu,\n"
                "  \"deletes\": %llu,\n"
                "  \"compactions\": %llu,\n"
+               "  \"index_memory_bytes\": %llu,\n"
                "  \"version\": \"%s\"\n"
                "}\n",
                (unsigned long long)stats.records,
@@ -261,6 +262,7 @@ static int cmd_stats(int argc, char **argv)
                (unsigned long long)stats.puts,
                (unsigned long long)stats.deletes,
                (unsigned long long)stats.compactions,
+               (unsigned long long)stats.index_memory_bytes,
                tinykv_version_string());
     else
         printf("records:         %llu\n"
@@ -270,7 +272,8 @@ static int cmd_stats(int argc, char **argv)
                "discarded_bytes: %llu\n"
                "puts:            %llu\n"
                "deletes:         %llu\n"
-               "compactions:     %llu\n",
+               "compactions:     %llu\n"
+               "index_memory:    %llu\n",
                (unsigned long long)stats.records,
                (unsigned long long)stats.file_size,
                (unsigned long long)stats.live_bytes,
@@ -278,7 +281,8 @@ static int cmd_stats(int argc, char **argv)
                (unsigned long long)stats.discarded_bytes,
                (unsigned long long)stats.puts,
                (unsigned long long)stats.deletes,
-               (unsigned long long)stats.compactions);
+               (unsigned long long)stats.compactions,
+               (unsigned long long)stats.index_memory_bytes);
     return 0;
 }
 
