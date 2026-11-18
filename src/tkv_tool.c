@@ -15,6 +15,7 @@ static void usage(FILE *stream)
           "  put <db> <key> <value>   store a value (NUL-free strings)\n"
           "  get <db> <key> [--raw]   print a value (--raw: no newline)\n"
           "  del <db> <key>           delete a key\n"
+          "  exists <db> <key>        exit 0 if the key is present\n"
           "  list <db> [prefix]       print key<TAB>value, optionally filtered\n"
           "  keys <db> [prefix]       print live keys, optionally filtered\n"
           "  count <db>               print the number of live keys\n"
@@ -195,6 +196,25 @@ static int cmd_keys(int argc, char **argv)
     if (stdout_dead)
         return fprintf(stderr, "tinykv: write to stdout failed\n"), 6;
     return 0;
+}
+
+static int cmd_exists(int argc, char **argv)
+{
+    tinykv_db *db = NULL;
+    tinykv_status status;
+    tinykv_options options;
+    if (argc != 3) return usage(stderr), 1;
+    read_only_options(&options);
+    status = tinykv_open(argv[1], &options, &db);
+    if (status != TINYKV_OK) return report(argv[1], status), exit_code_for(status);
+    status = tinykv_exists(db, argv[2], strlen(argv[2]));
+    tinykv_close(db);
+    if (status == TINYKV_OK) {
+        printf("exists\n");
+        return 0;
+    }
+    if (status == TINYKV_ERR_NOT_FOUND) return 2;
+    return report(argv[1], status), exit_code_for(status);
 }
 
 static int cmd_count(int argc, char **argv)
@@ -603,6 +623,7 @@ int main(int argc, char **argv)
     else if (strcmp(argv[1], "get") == 0) result = cmd_get(argc - 1, argv + 1);
     else if (strcmp(argv[1], "del") == 0 || strcmp(argv[1], "delete") == 0)
         result = cmd_delete(argc - 1, argv + 1);
+    else if (strcmp(argv[1], "exists") == 0) result = cmd_exists(argc - 1, argv + 1);
     else if (strcmp(argv[1], "list") == 0) result = cmd_list(argc - 1, argv + 1);
     else if (strcmp(argv[1], "keys") == 0) result = cmd_keys(argc - 1, argv + 1);
     else if (strcmp(argv[1], "export") == 0) result = cmd_export(argc - 1, argv + 1);
