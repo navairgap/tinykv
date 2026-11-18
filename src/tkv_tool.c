@@ -18,7 +18,7 @@ static void usage(FILE *stream)
           "  exists <db> <key>        exit 0 if the key is present\n"
           "  list <db> [prefix]       print key<TAB>value, optionally filtered\n"
           "  keys <db> [prefix]       print live keys, optionally filtered\n"
-          "  count <db>               print the number of live keys\n"
+          "  count <db> [prefix]      print the live key count, optionally filtered\n"
           "  stats <db> [--json]      print storage statistics\n"
           "  compact <db>             rewrite the log, dropping dead bytes\n"
           "  export <db> <file>       dump key<TAB>value lines to a new file\n"
@@ -224,16 +224,28 @@ static int cmd_count(int argc, char **argv)
     tinykv_status status;
     uint64_t count = 0;
     tinykv_options options;
-    if (argc != 2) return usage(stderr), 1;
-    options.max_key_length = 4096;
-    options.max_value_length = 1048576;
-    options.sync = TINYKV_SYNC_EVERY_WRITE;
-    options.create_if_missing = 0;
-    options.read_only = 1;
-    options.lock = 0;
+    const void *key = NULL, *value = NULL;
+    size_t klen = 0, vlen = 0;
+    tinykv_iter *iter = NULL;
+    if (argc < 2 || argc > 3) return usage(stderr), 1;
+    read_only_options(&options);
     status = tinykv_open(argv[1], &options, &db);
     if (status != TINYKV_OK) return report(argv[1], status), exit_code_for(status);
-    status = tinykv_count(db, &count);
+    if (argc == 2) {
+        status = tinykv_count(db, &count);
+    } else {
+        /* Prefix-filtered count: walk the prefix snapshot. */
+        status = tinykv_iter_new_prefix(db, argv[2], strlen(argv[2]), &iter);
+        if (status == TINYKV_OK) {
+            count = 0;
+            while (tinykv_iter_next(iter, &key, &klen, &value, &vlen) ==
+                       TINYKV_OK &&
+                   key != NULL)
+                count++;
+            tinykv_iter_free(iter);
+            status = TINYKV_OK;
+        }
+    }
     tinykv_close(db);
     if (status != TINYKV_OK) return report(argv[1], status), exit_code_for(status);
     printf("%llu\n", (unsigned long long)count);

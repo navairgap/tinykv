@@ -18,6 +18,8 @@ test "$("$TOOL" keys "$db")" = "$(printf 'greeting\nuser')"
 printf 'prefix:one\t1\nprefix:two\t2\n' | "$TOOL" batch "$db" > /dev/null
 test "$("$TOOL" keys "$db" 'prefix:')" = "$(printf 'prefix:one\nprefix:two')"
 test "$("$TOOL" list "$db" 'prefix:')" = "$(printf 'prefix:one\t1\nprefix:two\t2')"
+test "$("$TOOL" count "$db" 'prefix:')" = 2
+test "$("$TOOL" count "$db" 'nope:')" = 0
 "$TOOL" del "$db" prefix:one
 "$TOOL" del "$db" prefix:two
 "$TOOL" verify "$db"
