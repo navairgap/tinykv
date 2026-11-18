@@ -163,6 +163,40 @@ int main(int argc, char **argv)
     }
     report("get (malloc)", count, now_seconds() - start);
 
+    start = now_seconds();
+    for (i = 0; i < count; ++i) {
+        int len = snprintf(key, sizeof(key), "key-%08ld", i);
+        if (tinykv_exists(db, key, (size_t)len) != TINYKV_OK) {
+            fprintf(stderr, "bench: exists failed\n");
+            result = 1;
+            goto out_close;
+        }
+    }
+    report("exists", count, now_seconds() - start);
+
+    start = now_seconds();
+    {
+        enum { BATCH = 16 };
+        tinykv_get_result batch[BATCH];
+        long batches = count / BATCH;
+        long b, j;
+        for (b = 0; b < batches; ++b) {
+            for (j = 0; j < BATCH; ++j) {
+                batch[j].key = key;
+                batch[j].key_length =
+                    (size_t)snprintf(key, sizeof(key), "key-%08ld",
+                                     b * BATCH + j);
+            }
+            if (tinykv_get_multi(db, batch, BATCH) != TINYKV_OK) {
+                fprintf(stderr, "bench: get_multi failed\n");
+                result = 1;
+                goto out_close;
+            }
+            for (j = 0; j < BATCH; ++j) free(batch[j].value);
+        }
+        report("get_multi (16)", batches * BATCH, now_seconds() - start);
+    }
+
     tinykv_close(db);
     start = now_seconds();
     if (tinykv_open("/tmp/tinykv-bench.tkv", &options, &db) != TINYKV_OK) {
