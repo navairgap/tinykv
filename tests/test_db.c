@@ -1350,6 +1350,38 @@ static void test_buffered_sync_compact_interactions(void)
     tinykv_close(db);
 }
 
+static void test_iteration_across_compaction(void)
+{
+    char path[128];
+    tinykv_db *db = NULL;
+    tinykv_iter *iter = NULL;
+    const void *key = NULL, *value = NULL;
+    size_t klen = 0, vlen = 0;
+    int seen = 0;
+    db_path(path, sizeof(path), "iter-compact.db");
+    assert(tinykv_open(path, NULL, &db) == TINYKV_OK);
+    assert(tinykv_put(db, "a", 1, "1", 1) == TINYKV_OK);
+    assert(tinykv_put(db, "b", 1, "2", 1) == TINYKV_OK);
+    assert(tinykv_put(db, "c", 1, "3", 1) == TINYKV_OK);
+
+    /* Snapshot, then compact behind the iterator's back: every step
+     * re-reads through the current index, so all three values must be
+     * correct even though every offset changed. */
+    assert(tinykv_iter_new(db, &iter) == TINYKV_OK);
+    assert(tinykv_iter_next(iter, &key, &klen, &value, &vlen) == TINYKV_OK);
+    assert(*(const char *)key == 'a');
+    assert(tinykv_compact(db) == TINYKV_OK);
+    while (tinykv_iter_next(iter, &key, &klen, &value, &vlen) == TINYKV_OK &&
+           key != NULL) {
+        assert(vlen == 1 && *(const char *)value >= '1' &&
+               *(const char *)value <= '3');
+        seen++;
+    }
+    assert(seen == 2); /* 'a' was consumed before the compaction */
+    tinykv_iter_free(iter);
+    tinykv_close(db);
+}
+
 int main(void)
 {
     assert(mkdtemp(temp_dir) != NULL);
@@ -1389,6 +1421,7 @@ int main(void)
     test_prefix_iteration();
     test_auto_compact_on_close();
     test_buffered_sync_compact_interactions();
+    test_iteration_across_compaction();
     remove_temp_dir();
     puts("tinykv db: all tests passed");
     return 0;
