@@ -84,6 +84,28 @@ always set to the value's length; a short buffer returns
 `TINYKV_ERR_LIMIT` with the required size. Zero-length values need no
 buffer (`buffer == NULL, capacity == 0` is valid).
 
+### `tinykv_exists`
+```c
+tinykv_status tinykv_exists(const tinykv_db *db, const void *key,
+                            size_t key_length);
+```
+`TINYKV_OK` when the key is live, `TINYKV_ERR_NOT_FOUND` when it is
+not — answered from the index without reading, verifying, or copying
+any value.
+
+### `tinykv_get_multi`
+```c
+tinykv_status tinykv_get_multi(tinykv_db *db, tinykv_get_result *requests,
+                               size_t count);
+```
+Resolves many keys under one lock acquisition. Each entry's
+`status`/`value`/`value_length` are filled per key; `value` is malloc'd
+only when that entry's status is `TINYKV_OK` (zero-length values are
+still non-NULL) and the caller frees it. The overall status is
+`TINYKV_OK` only if every entry succeeded; otherwise it is the first
+failing entry's status. Entries are evaluated at execution time —
+deletes after the request list was built are visible to the batch.
+
 ### `tinykv_delete`
 ```c
 tinykv_status tinykv_delete(tinykv_db *db, const void *key,
@@ -165,7 +187,9 @@ order. The prefix variant snapshots only keys starting with the prefix
 bytes (NULL prefix, length 0 = whole keyspace). Values are re-read at
 each step, so keys deleted after the
 snapshot are skipped and values reflect the newest writes. Pointers stay
-valid until the next step; iteration ends with `*out_key == NULL`.
+valid until the next step; iteration ends with `*out_key == NULL`. `tinykv_iter_remaining`
+reports an upper bound on the keys still to be produced (snapshot size
+minus attempted steps; mid-iteration deletes can lower the real yield).
 
 ## Concurrency
 
