@@ -46,6 +46,7 @@ src/tkv_io.c              write-all/pread-all loops, fsync file+dir, flock,
 src/tkv_log.c             record append + recovery scan (growing buffer)
 src/tkv_db.c              lifecycle, write/read paths, compaction, verify,
                           non-destructive repair, stats, iteration
+src/tkv_mutex.h           optional internal handle lock (pthreads or no-op)
 src/tkv_tool.c            the tinykv command line tool
 ```
 
@@ -92,8 +93,31 @@ exclusive flock on `<path>.lock`; a second writer gets
 `TINYKV_ERR_LOCKED` instead of two logs interleaving. Read-only opens
 skip the lock entirely and see a crash-consistent prefix of the log.
 
-## Explicit non-goals (v1.0)
+**Threads are a compile-time choice.** By default every public call on
+a handle takes a recursive internal mutex, so one `tinykv_db` is safe
+to share; iteration re-reads values through `tinykv_get` under the same
+lock. Embedders who serialize externally build with
+`-DTINYKV_NO_THREADS` (or `make NO_THREADS=1`) to drop the pthread
+dependency; the mutex compiles to no-ops. A ThreadSanitizer job in CI
+exercises the lock, and `NO_THREADS=1` is built and tested there too.
 
-Threads inside a handle, multi-process writers, network/replication,
-Windows, compression, and range scans. These are scope cuts, not
-oversights — see the README for the v1 boundary.
+**The write buffer is a durability knob, not a cache.** Appends
+accumulate in a 64 KiB userspace buffer handed to the descriptor with
+positional writes, so bulk loads pay one syscall per 64 KiB. Reads of
+not-yet-flushed records, `tinykv_sync`, compaction, and close all flush
+first — a clean close never loses buffered records — and the
+`TINYKV_SYNC_*` policies decide when an fsync follows. Only crash
+semantics change with `SYNC_NONE`: unflushed bytes vanish exactly like
+any unsynced write would.
+
+**Checksums use a pinned table.** The CRC-32/ISO-HDLC lookup table is
+constant data in the binary — no lazy init race, no per-bit loop. The
+golden-vector tests still verify it against an independent
+implementation, which is what makes the speedup trustworthy.
+
+## Explicit non-goals (1.5)
+
+Multi-process writers, network/replication, Windows, compression, and
+ordered range scans (iteration is a sorted key snapshot with optional
+prefix filtering). Threads inside a handle moved from a v1.0 non-goal
+into a supported default; the rest remain scope cuts, not oversights.
