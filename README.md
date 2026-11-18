@@ -144,6 +144,7 @@ actually read.
 
 ## Documentation
 
+- [docs/tutorial.md](docs/tutorial.md) — start here: the API in five minutes
 - [docs/api.md](docs/api.md) — every public function, with semantics
 - [docs/design.md](docs/design.md) — architecture and trade-offs
 - [docs/durability.md](docs/durability.md) — sync policies and crash cases
