@@ -11,7 +11,8 @@ versions [Semantic Versioning](https://semver.org/).
 - `tinykv_exists` presence checks answered from the index alone
 - `tinykv_get_multi` batched reads under one lock acquisition
 - `tinykv_iter_remaining` upper-bound iteration progress
-- CLI `exists`, `count [prefix]`, and `verify --json`
+- CLI `exists`, `count [prefix]`, `verify --json`, and
+  `get --into=FILE` for binary values
 - `verify`/`repair` accept `--max-key`/`--max-value` for custom-limit
   databases
 - Benchmark phases for `exists` (~3.3M ops/s) and batched reads
@@ -24,7 +25,8 @@ versions [Semantic Versioning](https://semver.org/).
 
 ### Testing
 
-- Export/import double round-trip property test
+- Export/import double round-trip property test and binary-value CLI
+  output tests
 - Auto-compact threshold boundary, batch-under-delete, prefix
   iteration after concurrent writes, and iterator progress tests
 
