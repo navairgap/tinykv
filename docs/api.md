@@ -1,4 +1,4 @@
-# tinykv API reference (v1.0.0)
+# tinykv API reference (v1.5.0)
 
 Header: `#include "tinykv/db.h"`. Link against `libtinykv.a`.
 Every function returns `tinykv_status`; `TINYKV_OK` means success. Keys
@@ -38,6 +38,7 @@ NULL. Options (NULL = defaults):
 | `create_if_missing` | 1 | 0 = fail instead of creating |
 | `read_only` | 0 | read-only handles never lock or write |
 | `lock` | 1 | exclusive flock via `<path>.lock` |
+| `auto_compact_dead_ratio` | 0.0 | compact on close when dead bytes reach this share (0.0-1.0; 0 disables) |
 
 Open replays the whole log. A torn tail is tolerated (reclaimed on the
 next write); mid-log corruption returns `TINYKV_ERR_CORRUPT` — run
@@ -93,6 +94,14 @@ that is not present returns `TINYKV_ERR_NOT_FOUND` and writes nothing.
 
 ## Maintenance
 
+### `tinykv_sync`
+```c
+tinykv_status tinykv_sync(tinykv_db *db);
+```
+Flushes buffered records and fsyncs the log now, under any sync policy —
+the durability point for `TINYKV_SYNC_NONE` writers. Read-only handles
+return `TINYKV_ERR_INVALID`.
+
 ### `tinykv_compact`
 ```c
 tinykv_status tinykv_compact(tinykv_db *db);
@@ -134,12 +143,17 @@ tinykv_status tinykv_count(const tinykv_db *db, uint64_t *out_count);
 tinykv_status tinykv_get_stats(const tinykv_db *db, tinykv_stats *out);
 ```
 `tinykv_stats` reports live records, file size, live/dead/discarded
-bytes, and put/delete/compaction counters. `dead_bytes` is space
+bytes, put/delete/compaction counters, and `index_memory_bytes` — an
+approximate resident index size (bucket array plus one allocation per
+live key; malloc overhead not modeled). `dead_bytes` is space
 reclaimable by compaction (superseded records, tombstones, torn tails).
 
 ### `tinykv_iter_new` / `tinykv_iter_next` / `tinykv_iter_free`
 ```c
 tinykv_status tinykv_iter_new(const tinykv_db *db, tinykv_iter **out);
+tinykv_status tinykv_iter_new_prefix(const tinykv_db *db, const void *prefix,
+                                     size_t prefix_length,
+                                     tinykv_iter **out);
 tinykv_status tinykv_iter_next(tinykv_iter *iter, const void **out_key,
                                size_t *out_key_length,
                                const void **out_value,
@@ -147,15 +161,20 @@ tinykv_status tinykv_iter_next(tinykv_iter *iter, const void **out_key,
 void tinykv_iter_free(tinykv_iter *iter);
 ```
 Snapshot of the live key set at creation, visited in lexicographic
-order. Values are re-read at each step, so keys deleted after the
+order. The prefix variant snapshots only keys starting with the prefix
+bytes (NULL prefix, length 0 = whole keyspace). Values are re-read at
+each step, so keys deleted after the
 snapshot are skipped and values reflect the newest writes. Pointers stay
 valid until the next step; iteration ends with `*out_key == NULL`.
 
 ## Concurrency
 
-One handle is not thread-safe; serialize access yourself. Across
-processes, one read-write handle is enforced by an exclusive flock on
-`<path>.lock`; read-only handles never take the lock.
+One handle may be shared across threads: every public call takes an
+internal recursive mutex. Embedders who serialize externally can build
+with `-DTINYKV_NO_THREADS` (or `make NO_THREADS=1`) to drop the pthread
+dependency. Across processes, one read-write handle is enforced by an
+exclusive flock on `<path>.lock`; read-only handles never take the
+lock.
 
 ## Record codec
 
