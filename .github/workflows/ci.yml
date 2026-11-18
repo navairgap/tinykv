@@ -82,8 +82,9 @@ jobs:
       - name: Compile fuzz target with libFuzzer
         run: >
           clang -std=c11 -O1 -g -fsanitize=fuzzer,address
-          -DTINYKV_HAVE_LIBFUZZER -Iinclude
-          src/record_codec.c fuzz/record_codec_fuzz.c
+          -DTINYKV_HAVE_LIBFUZZER -Iinclude -Isrc
+          src/record_codec.c src/tkv_log.c src/tkv_io.c
+          fuzz/record_codec_fuzz.c
           -o /tmp/record-fuzz
       - name: Fuzz the codec for 60 seconds
         run: /tmp/record-fuzz -max_total_time=60 -rss_limit_mb=2048
