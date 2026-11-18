@@ -8,14 +8,18 @@ hash index, and explicit recovery and repair semantics — the classic
 [Bitcask](https://docs.riak.com/riak/kv/2.2.3/setup/planning/backend/bitcask/index.html)
 model, done carefully.
 
-> **Status: v1.0.0.** The on-disk format (`TKV1`), the public API, and the
+> **Status: v1.5.0.** The on-disk format (`TKV1`), the public API, and the
 > durability guarantees below are stable and covered by the test suite,
-> sanitizers, valgrind, and fuzzing.
+> sanitizers, ThreadSanitizer, valgrind, and fuzzing.
 
 ## Why tinykv
 
 - **Simple.** One append-only log file per database, one hash index in
   memory. No WAL/LSM/B-tree machinery to reason about.
+- **Thread-safe by default.** Share one handle across threads; build
+  with `NO_THREADS=1` if you serialize externally or have no pthreads.
+- **Fast.** Table-driven CRC-32 and a 64 KiB write buffer put replay at
+  over a million records per second and puts near 800k ops/s.
 - **Crash-safe by construction.** Every record carries a CRC-32/ISO-HDLC
   checksum; a crash can only ever leave a torn tail, which replay
   detects and the next write reclaims. Corruption in the middle of a log
@@ -47,6 +51,15 @@ free(value);
 
 tinykv_compact(db);   /* drop dead bytes atomically */
 tinykv_close(db);
+```
+
+Prefix iteration filters namespaces without reading other keys:
+
+```c
+tinykv_iter *iter;
+tinykv_iter_new_prefix(db, "user:", 5, &iter);
+/* every "user:*" key, sorted, values re-read on each step */
+tinykv_iter_free(iter);
 ```
 
 Build and install:
@@ -149,6 +162,12 @@ exhaustive single-byte corruption coverage.
 
 ## FAQ
 
+**Can threads share one handle?**
+Yes by default — every call takes an internal recursive mutex, so one
+handle is safe across threads (serialized, not parallel). Build with
+`make NO_THREADS=1` to drop the pthread dependency and serialize
+yourself.
+
 **How big can my database be?**
 The index holds one entry per live key, so plan for roughly 40–80 bytes
 of RAM per key plus the value length you store. The file itself can grow
@@ -177,14 +196,16 @@ reclaim it explicitly.
 **Does tinykv give me durability by default?**
 Yes — the default `TINYKV_SYNC_EVERY_WRITE` fsyncs after every write.
 Bulk loads should switch to `TINYKV_SYNC_ON_CLOSE` or `SYNC_NONE` (the
-CLI's `batch --sync=` flag does this).
+CLI's `batch --sync=` flag does this), and `tinykv_sync(db)` is the
+explicit checkpoint for `SYNC_NONE` writers.
 
-## Non-goals (v1.0)
+## Non-goals (1.5)
 
-Networking, replication, multi-process writers, concurrent handles in
-one process (guard with a mutex if you need it), and Windows. POSIX only.
-The format is versioned: any incompatible change gets a new magic, never
-a silent reinterpretation of `TKV1` bytes.
+Networking, replication, multi-process writers, ordered range scans
+(iteration is a sorted snapshot with prefix filtering, not a B-tree
+cursor), compression, and Windows. POSIX only. The format is versioned:
+any incompatible change gets a new magic, never a silent
+reinterpretation of `TKV1` bytes.
 
 ## License
 
