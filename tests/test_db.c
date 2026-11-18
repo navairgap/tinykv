@@ -1432,6 +1432,34 @@ static void test_iter_remaining_tracks_progress(void)
     tinykv_close(db);
 }
 
+static void test_get_multi_resolves_batches(void)
+{
+    char path[128];
+    tinykv_db *db = NULL;
+    tinykv_get_result requests[4];
+    size_t i;
+    db_path(path, sizeof(path), "multi.db");
+    assert(tinykv_open(path, NULL, &db) == TINYKV_OK);
+    assert(tinykv_put(db, "alpha", 5, "one", 3) == TINYKV_OK);
+    assert(tinykv_put(db, "beta", 4, "", 0) == TINYKV_OK);
+    requests[0].key = "alpha"; requests[0].key_length = 5;
+    requests[1].key = "beta";  requests[1].key_length = 4;
+    requests[2].key = "gone";  requests[2].key_length = 4;
+    requests[3].key = NULL;    requests[3].key_length = 3;
+    assert(tinykv_get_multi(db, requests, 4) == TINYKV_ERR_NOT_FOUND);
+    assert(requests[0].status == TINYKV_OK &&
+           requests[0].value_length == 3 &&
+           memcmp(requests[0].value, "one", 3) == 0);
+    assert(requests[1].status == TINYKV_OK &&
+           requests[1].value != NULL && requests[1].value_length == 0);
+    assert(requests[2].status == TINYKV_ERR_NOT_FOUND &&
+           requests[2].value == NULL);
+    assert(requests[3].status == TINYKV_ERR_INVALID);
+    for (i = 0; i < 4; ++i) free(requests[i].value);
+    assert(tinykv_get_multi(db, NULL, 0) == TINYKV_OK);
+    tinykv_close(db);
+}
+
 int main(void)
 {
     assert(mkdtemp(temp_dir) != NULL);
@@ -1474,6 +1502,7 @@ int main(void)
     test_iteration_across_compaction();
     test_exists_checks_presence_only();
     test_iter_remaining_tracks_progress();
+    test_get_multi_resolves_batches();
     remove_temp_dir();
     puts("tinykv db: all tests passed");
     return 0;

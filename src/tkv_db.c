@@ -280,9 +280,11 @@ tinykv_status tinykv_delete(tinykv_db *db, const void *key, size_t key_length)
     return status;
 }
 
-tinykv_status tinykv_get(const tinykv_db *db, const void *key,
-                         size_t key_length, void **out_value,
-                         size_t *out_value_length)
+/* One read with the handle lock already held; shared by tinykv_get and
+ * tinykv_get_multi. */
+static tinykv_status get_locked(const tinykv_db *db, const void *key,
+                                size_t key_length, void **out_value,
+                                size_t *out_value_length)
 {
     const tkv_entry *entry;
     uint8_t *record = NULL;
@@ -292,35 +294,19 @@ tinykv_status tinykv_get(const tinykv_db *db, const void *key,
     tinykv_record_status status;
     tinykv_status flush_status;
 
-    if (out_value == NULL || out_value_length == NULL)
-        return TINYKV_ERR_INVALID;
     *out_value = NULL;
     *out_value_length = 0;
-    if (db == NULL || db->fd < 0 || (key == NULL && key_length != 0))
-        return TINYKV_ERR_INVALID;
-
-    tkv_mutex_lock(handle_mutex(db));
     entry = tkv_index_find(&db->index, (const uint8_t *)key, key_length);
-    if (entry == NULL) {
-        tkv_mutex_unlock(handle_mutex(db));
-        return TINYKV_ERR_NOT_FOUND;
-    }
+    if (entry == NULL) return TINYKV_ERR_NOT_FOUND;
 
     flush_status = flush_for_read(db, entry->offset, entry->record_length);
-    if (flush_status != TINYKV_OK) {
-        tkv_mutex_unlock(handle_mutex(db));
-        return flush_status;
-    }
+    if (flush_status != TINYKV_OK) return flush_status;
 
     record = (uint8_t *)malloc(entry->record_length);
-    if (record == NULL) {
-        tkv_mutex_unlock(handle_mutex(db));
-        return TINYKV_ERR_NOMEM;
-    }
+    if (record == NULL) return TINYKV_ERR_NOMEM;
     if (tkv_pread_all(db->fd, record, entry->record_length,
                       entry->offset) != 0) {
         free(record);
-        tkv_mutex_unlock(handle_mutex(db));
         return TINYKV_ERR_IO;
     }
     status = tinykv_record_decode(record, entry->record_length,
@@ -331,13 +317,11 @@ tinykv_status tinykv_get(const tinykv_db *db, const void *key,
         view.key_length != key_length ||
         (key_length != 0 && memcmp(view.key, key, key_length) != 0)) {
         free(record);
-        tkv_mutex_unlock(handle_mutex(db));
         return TINYKV_ERR_CORRUPT;
     }
     value = malloc(view.value_length ? view.value_length : 1);
     if (value == NULL) {
         free(record);
-        tkv_mutex_unlock(handle_mutex(db));
         return TINYKV_ERR_NOMEM;
     }
     if (view.value_length != 0)
@@ -345,8 +329,49 @@ tinykv_status tinykv_get(const tinykv_db *db, const void *key,
     free(record);
     *out_value = value;
     *out_value_length = view.value_length;
-    tkv_mutex_unlock(handle_mutex(db));
     return TINYKV_OK;
+}
+
+tinykv_status tinykv_get(const tinykv_db *db, const void *key,
+                         size_t key_length, void **out_value,
+                         size_t *out_value_length)
+{
+    tinykv_status status;
+    if (out_value == NULL || out_value_length == NULL)
+        return TINYKV_ERR_INVALID;
+    *out_value = NULL;
+    *out_value_length = 0;
+    if (db == NULL || db->fd < 0 || (key == NULL && key_length != 0))
+        return TINYKV_ERR_INVALID;
+    tkv_mutex_lock(handle_mutex(db));
+    status = get_locked(db, key, key_length, out_value, out_value_length);
+    tkv_mutex_unlock(handle_mutex(db));
+    return status;
+}
+
+tinykv_status tinykv_get_multi(tinykv_db *db, tinykv_get_result *requests,
+                               size_t count)
+{
+    tinykv_status overall = TINYKV_OK;
+    size_t i;
+    if (db == NULL || (requests == NULL && count != 0))
+        return TINYKV_ERR_INVALID;
+    if (db->fd < 0) return TINYKV_ERR_INVALID;
+    tkv_mutex_lock(&db->mutex);
+    for (i = 0; i < count; ++i) {
+        requests[i].status = TINYKV_ERR_INVALID;
+        requests[i].value = NULL;
+        requests[i].value_length = 0;
+        if (requests[i].key == NULL && requests[i].key_length != 0)
+            continue;
+        requests[i].status =
+            get_locked(db, requests[i].key, requests[i].key_length,
+                       &requests[i].value, &requests[i].value_length);
+        if (requests[i].status != TINYKV_OK && overall == TINYKV_OK)
+            overall = requests[i].status;
+    }
+    tkv_mutex_unlock(&db->mutex);
+    return overall;
 }
 
 static void db_free(tinykv_db *db)

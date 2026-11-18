@@ -88,6 +88,22 @@ tinykv_status tinykv_get_into(const tinykv_db *db, const void *key,
                               size_t key_length, void *buffer,
                               size_t capacity, size_t *out_value_length);
 
+/* Batched read: resolves many keys under one lock acquisition.
+ * Each entry's status/value/value_length are filled per key; a value is
+ * malloc'd only when that entry's status is TINYKV_OK and the caller
+ * frees it. The overall status is TINYKV_OK only if every entry
+ * succeeded; otherwise it is the first failing entry's status. */
+typedef struct {
+    const void *key;
+    size_t key_length;
+    tinykv_status status;
+    void *value;
+    size_t value_length;
+} tinykv_get_result;
+
+tinykv_status tinykv_get_multi(tinykv_db *db, tinykv_get_result *requests,
+                               size_t count);
+
 /* Rewrite the log keeping only live records, atomically replacing the
  * file. Reclaims dead and discarded bytes. */
 tinykv_status tinykv_compact(tinykv_db *db);
