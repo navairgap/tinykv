@@ -88,6 +88,11 @@ tinykv_status tinykv_get_into(const tinykv_db *db, const void *key,
  * file. Reclaims dead and discarded bytes. */
 tinykv_status tinykv_compact(tinykv_db *db);
 
+/* Flush buffered records and fsync the log now, whatever the sync
+ * policy says — the durability point for TINYKV_SYNC_NONE writers.
+ * Read-only handles return TINYKV_ERR_INVALID (nothing to sync). */
+tinykv_status tinykv_sync(tinykv_db *db);
+
 tinykv_status tinykv_count(const tinykv_db *db, uint64_t *out_count);
 tinykv_status tinykv_get_stats(const tinykv_db *db, tinykv_stats *out_stats);
 /* Path the handle was opened with; *out_path is a borrowed pointer

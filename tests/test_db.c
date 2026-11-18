@@ -1180,6 +1180,37 @@ static void test_write_buffering_and_flush_points(void)
     tinykv_close(db);
 }
 
+static void test_explicit_sync_makes_none_durable(void)
+{
+    char path[128];
+    tinykv_db *db = NULL;
+    tinykv_options options;
+    struct stat st;
+    void *value = NULL;
+    size_t value_length = 0;
+    db_path(path, sizeof(path), "sync.db");
+    options = tinykv_options_default_for_test();
+    options.sync = TINYKV_SYNC_NONE;
+    assert(tinykv_open(path, &options, &db) == TINYKV_OK);
+    assert(tinykv_put(db, "alpha", 5, "one", 3) == TINYKV_OK);
+    assert(stat(path, &st) == 0 && st.st_size == 0); /* still buffered */
+    assert(tinykv_sync(db) == TINYKV_OK);
+    assert(stat(path, &st) == 0 && st.st_size == 25); /* handed off now */
+    assert(tinykv_sync(db) == TINYKV_OK); /* idempotent */
+    tinykv_close(db);
+
+    assert(tinykv_open(path, &options, &db) == TINYKV_OK);
+    assert(tinykv_get(db, "alpha", 5, &value, &value_length) == TINYKV_OK);
+    assert(value_length == 3);
+    free(value);
+    tinykv_close(db);
+
+    options.read_only = 1;
+    assert(tinykv_open(path, &options, &db) == TINYKV_OK);
+    assert(tinykv_sync(db) == TINYKV_ERR_INVALID);
+    tinykv_close(db);
+}
+
 int main(void)
 {
     assert(mkdtemp(temp_dir) != NULL);
@@ -1215,6 +1246,7 @@ int main(void)
     test_verify_and_repair_on_missing_file();
     test_every_single_byte_corruption_is_classified();
     test_write_buffering_and_flush_points();
+    test_explicit_sync_makes_none_durable();
     remove_temp_dir();
     puts("tinykv db: all tests passed");
     return 0;

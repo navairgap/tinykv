@@ -463,6 +463,19 @@ static void add_record_bytes(tkv_entry *entry, void *user)
     state->total += entry->record_length;
 }
 
+tinykv_status tinykv_sync(tinykv_db *db)
+{
+    tinykv_status status;
+    if (db == NULL || db->fd < 0) return TINYKV_ERR_INVALID;
+    if (db->options.read_only) return TINYKV_ERR_INVALID;
+    tkv_mutex_lock(&db->mutex);
+    status = flush_wbuf(db);
+    if (status == TINYKV_OK && tkv_fsync_file(db->fd) != 0)
+        status = TINYKV_ERR_IO;
+    tkv_mutex_unlock(&db->mutex);
+    return status;
+}
+
 tinykv_status tinykv_get_stats(const tinykv_db *db, tinykv_stats *out_stats)
 {
     struct bytes_state bytes = {0};
