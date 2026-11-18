@@ -96,5 +96,5 @@ test "$("$TOOL" get "$work/fresh.db" greeting)" = hello
     echo "smoke: copy must refuse an existing destination" >&2
     exit 1
 fi
-"$TOOL" version
+"$TOOL" version | grep -q 'tinykv 1.5.0'
 echo "tinykv cli smoke: all checks passed"

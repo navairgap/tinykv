@@ -28,6 +28,13 @@ none), multi-tenant host defenses beyond file permissions, side-channel
 resistance, and SQL/CLI injection (the CLI stores argument bytes
 verbatim).
 
+## Threading
+
+Handles are internally serialized by default; the lock is part of the
+security surface, so races or deadlocks found under ThreadSanitizer
+(including on the `NO_THREADS` build, which delegates serialization to
+the embedder) are treated as defects.
+
 ## Hardening notes
 
 - Keys and values are opaque bytes; the decoder enforces configured
