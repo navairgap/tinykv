@@ -1315,6 +1315,41 @@ static void test_auto_compact_on_close(void)
     tinykv_close(db);
 }
 
+static void test_buffered_sync_compact_interactions(void)
+{
+    char path[128];
+    tinykv_db *db = NULL;
+    tinykv_options options;
+    void *value = NULL;
+    size_t value_length = 0;
+    struct stat st;
+    db_path(path, sizeof(path), "interactions.db");
+    options = tinykv_options_default_for_test();
+    options.sync = TINYKV_SYNC_NONE;
+    assert(tinykv_open(path, &options, &db) == TINYKV_OK);
+    assert(tinykv_put(db, "alpha", 5, "one", 3) == TINYKV_OK);
+    assert(tinykv_put(db, "beta", 4, "two", 3) == TINYKV_OK);
+    /* sync() hands the buffered records to the file without a restart. */
+    assert(tinykv_sync(db) == TINYKV_OK);
+    assert(stat(path, &st) == 0 && st.st_size == 25 + 24);
+    /* An explicit sync before compaction leaves nothing behind. */
+    assert(tinykv_delete(db, "beta", 4) == TINYKV_OK);
+    assert(tinykv_compact(db) == TINYKV_OK);
+    assert(tinykv_get(db, "alpha", 5, &value, &value_length) == TINYKV_OK);
+    assert(value_length == 3 && memcmp(value, "one", 3) == 0);
+    free(value);
+    assert(tinykv_get(db, "beta", 4, &value, &value_length) ==
+           TINYKV_ERR_NOT_FOUND);
+    /* Values written after compaction land past the new file end. */
+    assert(tinykv_put(db, "gamma", 5, "three", 5) == TINYKV_OK);
+    tinykv_close(db);
+    assert(tinykv_open(path, &options, &db) == TINYKV_OK);
+    assert(tinykv_get(db, "gamma", 5, &value, &value_length) == TINYKV_OK);
+    assert(value_length == 5 && memcmp(value, "three", 5) == 0);
+    free(value);
+    tinykv_close(db);
+}
+
 int main(void)
 {
     assert(mkdtemp(temp_dir) != NULL);
@@ -1353,6 +1388,7 @@ int main(void)
     test_explicit_sync_makes_none_durable();
     test_prefix_iteration();
     test_auto_compact_on_close();
+    test_buffered_sync_compact_interactions();
     remove_temp_dir();
     puts("tinykv db: all tests passed");
     return 0;
