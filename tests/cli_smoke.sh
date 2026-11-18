@@ -12,6 +12,12 @@ db="$work/demo.db"
 test "$("$TOOL" get "$db" greeting)" = hello
 raw=$("$TOOL" get "$db" greeting --raw | od -An -c | tr -d ' \n')
 test "$raw" = 'hello' # --raw adds no trailing newline
+"$TOOL" get "$db" greeting --into="$work/binary-out"
+test "$(cat "$work/binary-out")" = hello
+if "$TOOL" get "$db" greeting --into="$work/binary-out"; then
+    echo "smoke: --into must refuse an existing file" >&2
+    exit 1
+fi
 test "$("$TOOL" count "$db")" = 2
 test "$("$TOOL" list "$db")" = "$(printf 'greeting\thello\nuser\tnaveen')"
 test "$("$TOOL" keys "$db")" = "$(printf 'greeting\nuser')"

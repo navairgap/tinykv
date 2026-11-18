@@ -14,6 +14,7 @@ static void usage(FILE *stream)
           "commands:\n"
           "  put <db> <key> <value>   store a value (NUL-free strings)\n"
           "  get <db> <key> [--raw]   print a value (--raw: no newline)\n"
+          "  get <db> <key> --into=F  write the exact bytes to a new file\n"
           "  del <db> <key>           delete a key\n"
           "  exists <db> <key>        exit 0 if the key is present\n"
           "  list <db> [prefix]       print key<TAB>value, optionally filtered\n"
@@ -95,11 +96,15 @@ static int cmd_get(int argc, char **argv)
     void *value = NULL;
     size_t value_length = 0;
     int raw = 0;
+    const char *into = NULL;
+    FILE *stream;
+    struct stat st;
     /* cmd_* helpers receive the command name in argv[0]: plain get is
-     * argc 3, get --raw is argc 4. */
+     * argc 3, get --raw or get --into=FILE is argc 4. */
     if (argc == 4) {
-        if (strcmp(argv[3], "--raw") != 0) return usage(stderr), 1;
-        raw = 1;
+        if (strcmp(argv[3], "--raw") == 0) raw = 1;
+        else if (strncmp(argv[3], "--into=", 7) == 0) into = argv[3] + 7;
+        else return usage(stderr), 1;
     } else if (argc != 3) {
         return usage(stderr), 1;
     }
@@ -109,6 +114,37 @@ static int cmd_get(int argc, char **argv)
     status = tinykv_get(db, argv[2], strlen(argv[2]), &value, &value_length);
     tinykv_close(db);
     if (status != TINYKV_OK) return report(argv[1], status), exit_code_for(status);
+    if (into != NULL) {
+        /* Binary-safe output: the exact stored bytes, nothing added. */
+        if (stat(into, &st) == 0) {
+            fprintf(stderr, "tinykv: %s already exists; --into refuses to overwrite\n",
+                    into);
+            free(value);
+            return 1;
+        }
+        stream = fopen(into, "wb");
+        if (stream == NULL) {
+            fprintf(stderr, "tinykv: %s: cannot open output file\n", into);
+            free(value);
+            return 6;
+        }
+        if (value_length != 0 &&
+            fwrite(value, 1, value_length, stream) != value_length) {
+            fprintf(stderr, "tinykv: %s: write failed\n", into);
+            fclose(stream);
+            free(value);
+            return 6;
+        }
+        if (fflush(stream) != 0 || ferror(stream)) {
+            fprintf(stderr, "tinykv: %s: write failed\n", into);
+            fclose(stream);
+            free(value);
+            return 6;
+        }
+        fclose(stream);
+        free(value);
+        return 0;
+    }
     emit(value, value_length);
     if (!raw && putchar('\n') == EOF) stdout_dead = 1;
     free(value);
