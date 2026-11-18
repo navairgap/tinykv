@@ -21,6 +21,7 @@ test "$("$TOOL" list "$db" 'prefix:')" = "$(printf 'prefix:one\t1\nprefix:two\t2
 "$TOOL" del "$db" prefix:one
 "$TOOL" del "$db" prefix:two
 "$TOOL" verify "$db"
+"$TOOL" verify "$db" --json | grep -q '"status": "ok"'
 "$TOOL" compact "$db"
 "$TOOL" verify "$db"
 "$TOOL" stats "$db" --json > "$work/stats.json"

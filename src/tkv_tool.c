@@ -27,7 +27,7 @@ static void usage(FILE *stream)
           "                           import stdin lines of key<TAB>value;\n"
           "                           policy: none, close (default), every\n"
           "  copy <db> <new-db>       consistent snapshot into a new file\n"
-          "  verify <db>              check the log for damage\n"
+          "  verify <db> [--json]     check the log for damage\n"
           "  repair <db> [--yes]      repair a damaged log (confirm with --yes)\n"
           "  version                  print the version\n",
           stream);
@@ -555,8 +555,24 @@ static int cmd_verify(int argc, char **argv)
 {
     uint64_t last_good = 0;
     tinykv_status status;
-    if (argc != 2) return usage(stderr), 1;
-    status = tinykv_verify(argv[1], 4096, 1048576, &last_good);
+    int as_json = 0;
+    const char *database;
+    if (argc < 2 || argc > 3) return usage(stderr), 1;
+    database = argv[1];
+    if (argc == 3) {
+        if (strcmp(argv[2], "--json") != 0) return usage(stderr), 1;
+        as_json = 1;
+    }
+    status = tinykv_verify(database, 4096, 1048576, &last_good);
+    if (as_json) {
+        printf("{\n"
+               "  \"status\": \"%s\",\n"
+               "  \"last_good_offset\": %llu\n"
+               "}\n",
+               tinykv_status_string(status),
+               (unsigned long long)last_good);
+        return exit_code_for(status);
+    }
     if (status == TINYKV_OK)
         printf("ok: log replays cleanly (%llu bytes)\n",
                (unsigned long long)last_good);
