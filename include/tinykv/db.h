@@ -63,6 +63,7 @@ typedef struct {
     uint64_t puts;
     uint64_t deletes;
     uint64_t compactions;
+    uint64_t index_memory_bytes; /* approximate resident index size */
 } tinykv_stats;
 
 typedef struct tinykv_db tinykv_db;

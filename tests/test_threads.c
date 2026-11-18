@@ -87,6 +87,7 @@ int main(void)
         char path[128];
         tinykv_options options;
         snprintf(path, sizeof(path), "%s/concurrent.db", temp_dir);
+        memset(&options, 0, sizeof(options)); /* every field set explicitly */
         options.max_key_length = 4096;
         options.max_value_length = 1048576;
         options.sync = TINYKV_SYNC_NONE;

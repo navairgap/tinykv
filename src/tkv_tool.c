@@ -67,6 +67,7 @@ static void read_only_options(tinykv_options *options)
     options->create_if_missing = 0;
     options->read_only = 1;
     options->lock = 0;
+    options->auto_compact_dead_ratio = 0.0;
 }
 
 static int cmd_put(int argc, char **argv)
@@ -312,6 +313,7 @@ static int cmd_batch(int argc, char **argv)
     options.create_if_missing = 1;
     options.read_only = 0;
     options.lock = 1;
+    options.auto_compact_dead_ratio = 0.0;
     if (argc == 3) {
         if (strncmp(argv[2], "--sync=", 7) != 0) return usage(stderr), 1;
         if (strcmp(argv[2] + 7, "none") == 0)

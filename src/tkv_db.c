@@ -467,6 +467,14 @@ static void add_record_bytes(tkv_entry *entry, void *user)
     state->total += entry->record_length;
 }
 
+/* Live key allocations for the index-memory estimate (malloc overhead
+ * not modeled). */
+static void add_entry_memory(tkv_entry *entry, void *user)
+{
+    struct bytes_state *state = (struct bytes_state *)user;
+    state->total += (uint64_t)entry->key_length + 1;
+}
+
 tinykv_status tinykv_sync(tinykv_db *db)
 {
     tinykv_status status;
@@ -484,9 +492,11 @@ tinykv_status tinykv_get_stats(const tinykv_db *db, tinykv_stats *out_stats)
 {
     struct bytes_state bytes = {0};
     if (db == NULL || out_stats == NULL) return TINYKV_ERR_INVALID;
+    struct bytes_state memory = {0};
     tkv_mutex_lock(handle_mutex(db));
     memset(out_stats, 0, sizeof(*out_stats));
     tkv_index_foreach(&db->index, add_record_bytes, &bytes);
+    tkv_index_foreach(&db->index, add_entry_memory, &memory);
     out_stats->records = (uint64_t)tkv_index_count(&db->index);
     out_stats->file_size = db->file_size;
     out_stats->live_bytes = bytes.total;
@@ -498,6 +508,8 @@ tinykv_status tinykv_get_stats(const tinykv_db *db, tinykv_stats *out_stats)
     out_stats->puts = db->puts;
     out_stats->deletes = db->deletes;
     out_stats->compactions = db->compactions;
+    out_stats->index_memory_bytes =
+        (uint64_t)db->index.capacity * sizeof(tkv_entry) + memory.total;
     tkv_mutex_unlock(handle_mutex(db));
     return TINYKV_OK;
 }

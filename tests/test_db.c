@@ -22,6 +22,7 @@ static tinykv_options tinykv_options_default_for_test(void)
     options.create_if_missing = 1;
     options.read_only = 0;
     options.lock = 1;
+    options.auto_compact_dead_ratio = 0.0;
     return options;
 }
 
