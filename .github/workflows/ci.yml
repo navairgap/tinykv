@@ -81,7 +81,8 @@ jobs:
       - uses: actions/checkout@v5
       - name: Compile fuzz target with libFuzzer
         run: >
-          clang -std=c11 -O1 -g -fsanitize=fuzzer,address
+          clang -std=c11 -O1 -g -Wall -Wextra -Werror -pedantic
+          -D_POSIX_C_SOURCE=200809L -fsanitize=fuzzer,address
           -DTINYKV_HAVE_LIBFUZZER -Iinclude -Isrc
           src/record_codec.c src/tkv_log.c src/tkv_io.c
           fuzz/record_codec_fuzz.c
