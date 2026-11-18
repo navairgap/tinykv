@@ -14,7 +14,7 @@ jobs:
       matrix:
         compiler: [gcc, clang]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Build with strict warnings
         run: make all CC=${{ matrix.compiler }}
       - name: Run all tests
@@ -28,7 +28,7 @@ jobs:
     name: asan + ubsan
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Build with sanitizers
         run: make all CC=gcc SAN=1
       - name: Run tests under sanitizers
@@ -43,7 +43,7 @@ jobs:
     name: valgrind
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install valgrind
         run: sudo apt-get update && sudo apt-get install -y valgrind
       - name: Build
@@ -59,11 +59,26 @@ jobs:
           build/test_db
           build/test_golden
 
+  threads:
+    name: threads + tsan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build with ThreadSanitizer
+        run: make all CC=gcc TSAN=1
+      - name: Run tests under ThreadSanitizer
+        run: make test CC=gcc TSAN=1
+      - name: Also build and test without threads
+        run: |
+          make clean
+          make all CC=gcc NO_THREADS=1
+          make test CC=gcc NO_THREADS=1
+
   libfuzzer:
     name: libfuzzer smoke
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Compile fuzz target with libFuzzer
         run: >
           clang -std=c11 -O1 -g -fsanitize=fuzzer,address
@@ -77,7 +92,7 @@ jobs:
     name: cli smoke test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Build
         run: make all CC=gcc
       - name: Exercise the tinykv tool
