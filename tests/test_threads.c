@@ -140,6 +140,30 @@ int main(void)
             free(got);
         }
     }
+    /* Prefix iteration after the concurrency storm: every surviving
+     * key in a per-thread namespace must be visible and correct. */
+    for (t = 0; t < THREADS; ++t) {
+        char prefix[16];
+        tinykv_iter *iter = NULL;
+        const void *key = NULL, *value = NULL;
+        size_t klen = 0, vlen = 0;
+        int seen = 0, expected = 0;
+        int i;
+        snprintf(prefix, sizeof(prefix), "t%d-", t);
+        assert(tinykv_iter_new_prefix(db, prefix, strlen(prefix), &iter) ==
+               TINYKV_OK);
+        while (tinykv_iter_next(iter, &key, &klen, &value, &vlen) ==
+                   TINYKV_OK &&
+               key != NULL) {
+            assert(klen == 12); /* "tN-key-NNNNN" */
+            assert(memcmp(key, prefix, strlen(prefix)) == 0);
+            seen++;
+        }
+        for (i = 0; i < KEYS_PER_THREAD; ++i)
+            if (i % 3 != 0) expected++;
+        assert(seen == expected);
+        tinykv_iter_free(iter);
+    }
     tinykv_close(db);
     remove_temp_dir();
     puts("tinykv threads: all tests passed");
