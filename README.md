@@ -179,12 +179,22 @@ actually read.
 
 ## Testing
 
-Six test programs cover the codec, index, POSIX I/O layer, log scan and
-append, the database lifecycle, and checksum fixtures. CI runs them
-under gcc and clang, address+undefined sanitizers with leak detection,
-valgrind, a 60-second libFuzzer run of the codec, and an end-to-end CLI
-smoke test. The fuzz harness also runs standalone (`make fuzz`) with
-exhaustive single-byte corruption coverage.
+Seven test programs cover the codec, index, POSIX I/O layer, log scan
+and append, the database lifecycle, checksum fixtures, and concurrency.
+CI runs them under gcc and clang, address+undefined sanitizers with
+leak detection, ThreadSanitizer, valgrind, a 60-second libFuzzer run of
+the codec and scanner, an end-to-end CLI smoke test, and a
+`NO_THREADS=1` build. Every mode runs locally too:
+
+    make test           # default -O2 build
+    make test SAN=1     # address + undefined sanitizers, leak detection
+    make test TSAN=1    # ThreadSanitizer
+    make test NO_THREADS=1
+    make fuzz           # deterministic corruption + scanner fuzzing
+    make smoke          # end-to-end CLI exercise
+
+The fuzz harness includes exhaustive single-byte corruption coverage
+and replays every input through the recovery scanner.
 
 ## FAQ
 
