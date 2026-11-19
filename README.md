@@ -178,6 +178,12 @@ exhaustive single-byte corruption coverage.
 
 ## FAQ
 
+**How do I look up many keys at once?**
+`tinykv_get_multi` resolves a whole request array under one lock
+acquisition, `tinykv_put_multi` and `tinykv_delete_multi` do the same
+for writes, and every entry reports its own status. `tinykv_iter_seek`
+positions an existing iterator at any key for pagination-style access.
+
 **Can threads share one handle?**
 Yes by default — every call takes an internal recursive mutex, so one
 handle is safe across threads (serialized, not parallel). Build with
