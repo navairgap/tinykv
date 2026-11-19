@@ -1,0 +1,124 @@
+.TH TINYKV 1 "2026-11-19" "tinykv 1.5" "User Commands"
+.SH NAME
+tinykv \- command line tool for the tinykv embedded key-value store
+.SH SYNOPSIS
+.B tinykv
+.I command database
+.RI [ args ]
+.SH DESCRIPTION
+.B tinykv
+operates on tinykv databases: single append-only log files with
+CRC-32 checksummed records and an in-memory hash index. One process may
+hold a database read-write at a time; any number of read-only handles
+are allowed.
+.SH COMMANDS
+.TP
+.BI put " database key value"
+Store a value. Keys and values are NUL-free shell strings; for binary
+payloads use the library API.
+.TP
+.BI get " database key"
+Print the value with a trailing newline.
+.B \-\-raw
+omits the newline;
+.BI \-\-into= file
+writes the exact stored bytes to a new file instead.
+.TP
+.BI exists " database key"
+Print
+.B exists
+and exit 0 when the key is present; exit 2 when it is not.
+.TP
+.BI del " database key"
+Delete a key. Absent keys exit 2 without writing anything.
+.TP
+.BI list " database"
+Print
+.B key<TAB>value
+for every live key in sorted order. An optional
+.I prefix
+argument filters the output.
+.TP
+.BI keys " database"
+Print one live key per line, optionally filtered by a prefix.
+.TP
+.BI count " database"
+Print the number of live keys, optionally filtered by a prefix.
+.TP
+.BI stats " database"
+Print storage statistics. With
+.B \-\-json
+the same numbers print as a JSON object including the version.
+.TP
+.BI compact " database"
+Rewrite the log keeping only live records, atomically.
+.TP
+.BI verify " database"
+Classify the log: exit 0 clean, 3 torn tail, 4 corruption. With
+.B \-\-json
+the status and last verified offset print as JSON.
+.TP
+.BI repair " database"
+Show a repair plan (dry run). Add
+.B \-\-yes
+to apply: the original is preserved as
+.IB database .bak,
+a verified replacement is written to
+.IB database .repair,
+then swapped in atomically.
+.B \-\-max-key= N
+and
+.B \-\-max-value= N
+match databases opened with custom limits.
+.TP
+.BI copy " database new-database"
+Consistent snapshot into a brand-new file.
+.TP
+.BI batch " database"
+Import
+.B key<TAB>value
+lines from standard input;
+.B \-\-sync= none|close|every
+chooses the durability policy.
+.TP
+.BI import " database file"
+Load the same line format from a file.
+.TP
+.BI export " database file"
+Dump every live key/value as
+.B key<TAB>value
+lines into a new file.
+.TP
+.B version
+Print the version.
+.SH EXIT STATUS
+.TP
+.B 0
+Success.
+.TP
+.B 1
+Usage error or invalid input.
+.TP
+.B 2
+Key not found.
+.TP
+.B 3
+Torn tail detected.
+.TP
+.B 4
+Corruption detected.
+.TP
+.B 5
+Database locked by another process.
+.TP
+.B 6
+Filesystem or output failure.
+.SH FILES
+Database files are created 0600. Repair leaves
+.IB database .bak
+next to the repaired database.
+.SH SEE ALSO
+The project README and docs/ directory: api.md, design.md,
+durability.md, record-format.md, repair-mode-safety.md.
+.SH AUTHOR
+tinykv contributors

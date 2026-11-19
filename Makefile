@@ -36,6 +36,7 @@ BINDIR := $(DESTDIR)$(PREFIX)/bin
 LIBDIR := $(DESTDIR)$(PREFIX)/lib
 INCDIR := $(DESTDIR)$(PREFIX)/include/tinykv
 PKGCFG := $(DESTDIR)$(PREFIX)/share/pkgconfig
+MANDIR := $(DESTDIR)$(PREFIX)/share/man/man1
 VERSION ?= 1.5.0
 
 PUBLIC_HEADERS := include/tinykv/record.h include/tinykv/db.h
@@ -89,16 +90,17 @@ smoke: $(TOOL)
 	./tests/cli_smoke.sh
 
 install: all
-	install -d $(BINDIR) $(LIBDIR) $(INCDIR) $(PKGCFG)
+	install -d $(BINDIR) $(LIBDIR) $(INCDIR) $(PKGCFG) $(MANDIR)
 	install -m 0755 $(TOOL) $(BINDIR)/tinykv
 	install -m 0644 $(BUILD)/libtinykv.a $(LIBDIR)/libtinykv.a
 	install -m 0644 $(PUBLIC_HEADERS) $(INCDIR)/
+	install -m 0644 docs/tinykv.1 $(MANDIR)/tinykv.1
 	sed -e 's|@PREFIX@|$(PREFIX)|g' -e 's|@VERSION@|$(VERSION)|g' \
 	    tinykv.pc.in > $(PKGCFG)/tinykv.pc
 
 uninstall:
 	rm -f $(BINDIR)/tinykv $(LIBDIR)/libtinykv.a \
-	      $(PKGCFG)/tinykv.pc
+	      $(PKGCFG)/tinykv.pc $(MANDIR)/tinykv.1
 	rmdir $(INCDIR) 2>/dev/null || true
 
 dist:
