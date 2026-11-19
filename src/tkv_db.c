@@ -653,7 +653,10 @@ tinykv_status tinykv_compact(tinykv_db *db)
         tmp_fd = open(tmp_path, O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC,
                       (mode_t)db->options.file_mode);
     while (tmp_fd < 0 && errno == EINTR);
-    if (tmp_fd < 0) return TINYKV_ERR_IO;
+    if (tmp_fd < 0) {
+        tkv_mutex_unlock(&db->mutex);
+        return TINYKV_ERR_IO;
+    }
     state.tmp_fd = tmp_fd;
 
     tkv_index_foreach_mutable(&db->index, compact_visit, &state);
