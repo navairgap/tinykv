@@ -116,6 +116,18 @@ handle lock once for a whole batch, and `tinykv_iter_remaining` is a
 subtraction — the 1.5 read-side additions were shaped so callers can
 plan work without extra scans.
 
+**Batched writes amortize the lock, not the durability.** put_multi and
+delete_multi hold the handle lock for the whole array but still honor
+the sync policy per record — under EVERY_WRITE each entry fsyncs, so a
+batch can never widen the crash window the policy promises. Per-entry
+statuses mean one bad key does not abort the rest; the overall status
+names the first failure for callers that only need pass/fail.
+
+**Seeking is a search, not a scan.** iter_seek binary-searches the
+sorted snapshot the iterator already holds, so positioning costs
+O(log n) comparisons regardless of where the target sits — the same
+snapshot, prefix filters, and re-read semantics as plain iteration.
+
 **Checksums use a pinned table.** The CRC-32/ISO-HDLC lookup table is
 constant data in the binary — no lazy init race, no per-bit loop. The
 golden-vector tests still verify it against an independent
