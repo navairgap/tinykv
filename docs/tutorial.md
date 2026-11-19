@@ -53,7 +53,31 @@ tinykv_get_multi(db, batch, 2);   /* one lock acquisition for both */
 for (size_t i = 0; i < 2; i++) free(batch[i].value);
 ```
 
-## 4. Iterate
+## 4. Batch reads and writes
+
+```c
+tinykv_get_result reads[2] = {
+    { .key = "empty",  .key_length = 5 },
+    { .key = "absent", .key_length = 6 },
+};
+tinykv_get_multi(db, reads, 2);      /* one lock acquisition */
+
+tinykv_put_request writes[2] = {
+    { .key = "a", .key_length = 1, .value = "1", .value_length = 1 },
+    { .key = "b", .key_length = 1, .value = "2", .value_length = 1 },
+};
+tinykv_put_multi(db, writes, 2);
+
+tinykv_key_result removals[1] = {
+    { .key = "a", .key_length = 1 },
+};
+tinykv_delete_multi(db, removals, 1);  /* NOT_FOUND if already gone */
+```
+
+Every entry carries its own status; free the malloc'd values from
+successful reads.
+
+## 5. Iterate
 
 ```c
 tinykv_iter *iter;
@@ -63,13 +87,15 @@ while (tinykv_iter_next(iter, &key, &klen, &value, &vlen) == TINYKV_OK &&
        key != NULL)
     printf("%.*s = %.*s\n", (int)klen, (const char *)key,
            (int)vlen, (const char *)value);
+/* Jump to any key (binary search over the snapshot): */
+tinykv_iter_seek(iter, "user:5", 6);
 tinykv_iter_free(iter);
 ```
 
 The iterator snapshots the key set, sorted; values are re-read on each
 step, and keys deleted meanwhile are skipped.
 
-## 5. Maintain
+## 6. Maintain
 
 ```c
 tinykv_stats stats;
@@ -86,7 +112,7 @@ tinykv_compact(db);  /* drop dead bytes atomically */
 Or set `options.auto_compact_dead_ratio = 0.5` at open and let close do
 it when the log is more than half dead.
 
-## 6. Durability choices
+## 7. Durability choices
 
 ```c
 tinykv_options options = {0};   /* zero, then set what you need */
@@ -104,7 +130,7 @@ the default; for the fastest possible load use `TINYKV_SYNC_NONE` and
 call `tinykv_sync` at checkpoints. See docs/durability.md for the crash
 semantics of each choice.
 
-## 7. The CLI does the same things
+## 8. The CLI does the same things
 
     tinykv put demo.tkv greeting hello
     tinykv get demo.tkv greeting --raw
