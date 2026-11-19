@@ -1258,6 +1258,16 @@ static void test_prefix_iteration(void)
     assert(tinykv_iter_next(iter, &key, &klen, &value, &vlen) == TINYKV_OK);
     assert(key == NULL);
     tinykv_iter_free(iter);
+    /* Seek respects the prefix filter: a target inside the namespace
+     * positions within it, one before it clamps to its head. */
+    assert(tinykv_iter_new_prefix(db, "user:", 5, &iter) == TINYKV_OK);
+    assert(tinykv_iter_seek(iter, "user:2", 6) == TINYKV_OK);
+    assert(tinykv_iter_next(iter, &key, &klen, &value, &vlen) == TINYKV_OK);
+    assert(klen == 6 && memcmp(key, "user:2", 6) == 0);
+    assert(tinykv_iter_seek(iter, "aaa", 3) == TINYKV_OK);
+    assert(tinykv_iter_next(iter, &key, &klen, &value, &vlen) == TINYKV_OK);
+    assert(memcmp(key, "user:", 5) == 0);
+    tinykv_iter_free(iter);
 
     assert(tinykv_iter_new_prefix(db, NULL, 3, &iter) ==
            TINYKV_ERR_INVALID);
