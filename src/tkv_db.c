@@ -74,6 +74,8 @@ static tinykv_status options_check(const tinykv_options *options)
     if (!(options->auto_compact_dead_ratio >= 0.0 &&
           options->auto_compact_dead_ratio <= 1.0))
         return TINYKV_ERR_INVALID; /* also rejects NaN */
+    if ((options->file_mode & 0600) != 0600 || (options->file_mode & 0002) != 0)
+        return TINYKV_ERR_INVALID; /* owner r/w required, no world-write */
     return TINYKV_OK;
 }
 
@@ -87,6 +89,7 @@ static tinykv_options options_default(void)
     defaults.read_only = 0;
     defaults.lock = 1;
     defaults.auto_compact_dead_ratio = 0.0;
+    defaults.file_mode = 0600;
     return defaults;
 }
 
@@ -409,7 +412,8 @@ tinykv_status tinykv_open(const char *path, const tinykv_options *options,
         if (stat(path, &st) != 0) return TINYKV_ERR_IO;
     }
 
-    fd = tkv_open_log(path, effective.read_only, &created);
+    fd = tkv_open_log(path, effective.read_only,
+                          (int)effective.file_mode, &created);
     if (fd < 0) return TINYKV_ERR_IO;
 
     if (!effective.read_only && effective.lock) {
@@ -646,7 +650,8 @@ tinykv_status tinykv_compact(tinykv_db *db)
     state.db = db;
     (void)unlink(tmp_path); /* a stale temp from an interrupted compaction */
     do
-        tmp_fd = open(tmp_path, O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+        tmp_fd = open(tmp_path, O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC,
+                      (mode_t)db->options.file_mode);
     while (tmp_fd < 0 && errno == EINTR);
     if (tmp_fd < 0) return TINYKV_ERR_IO;
     state.tmp_fd = tmp_fd;
@@ -669,7 +674,8 @@ tinykv_status tinykv_compact(tinykv_db *db)
         return TINYKV_ERR_IO;
     }
     close(db->fd);
-    db->fd = tkv_open_log(db->path, 0, NULL);
+    db->fd = tkv_open_log(db->path, 0, (int)db->options.file_mode,
+                              NULL);
     if (db->fd < 0) {
         free(state.list);
         tkv_mutex_unlock(&db->mutex);
@@ -698,7 +704,7 @@ static tinykv_status classify_log(const char *path, uint32_t max_key_length,
     int fd;
     limits.max_key_length = max_key_length;
     limits.max_value_length = max_value_length;
-    fd = tkv_open_log(path, 1, NULL);
+    fd = tkv_open_log(path, 1, 0600, NULL);
     if (fd < 0) return TINYKV_ERR_IO;
     if (tkv_log_scan(fd, &limits, NULL, NULL, &scan) != 0) {
         close(fd);

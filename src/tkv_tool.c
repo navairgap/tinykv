@@ -73,6 +73,7 @@ static void read_only_options(tinykv_options *options)
     options->read_only = 1;
     options->lock = 0;
     options->auto_compact_dead_ratio = 0.0;
+    options->file_mode = 0600;
 }
 
 static int cmd_put(int argc, char **argv)
@@ -416,6 +417,7 @@ static tinykv_status open_for_load(const char *database,
     options.read_only = 0;
     options.lock = 1;
     options.auto_compact_dead_ratio = 0.0;
+    options.file_mode = 0600;
     return tinykv_open(database, &options, out_db);
 }
 
@@ -447,6 +449,7 @@ static int cmd_batch(int argc, char **argv)
     options.read_only = 0;
     options.lock = 1;
     options.auto_compact_dead_ratio = 0.0;
+    options.file_mode = 0600;
     if (argc == 3) {
         if (strncmp(argv[2], "--sync=", 7) != 0) return usage(stderr), 1;
         if (strcmp(argv[2] + 7, "none") == 0)

@@ -23,6 +23,7 @@ static tinykv_options tinykv_options_default_for_test(void)
     options.read_only = 0;
     options.lock = 1;
     options.auto_compact_dead_ratio = 0.0;
+    options.file_mode = 0600;
     return options;
 }
 
@@ -122,7 +123,7 @@ static void test_corrupt_log_fails_open(void)
     tinykv_db *db = NULL;
     int fd;
     db_path(path, sizeof(path), "corrupt.db");
-    fd = tkv_open_log(path, 0, NULL);
+    fd = tkv_open_log(path, 0, 0600, NULL);
     assert(fd >= 0);
     /* A full header-sized run of junk is corruption, not a torn tail. */
     assert(tkv_write_all(fd, "JUNKJUNKJUNKJUNKJUNK", 20) == 0);
@@ -139,7 +140,7 @@ static void test_torn_tail_opens_cleanly(void)
     int fd;
     uint8_t partial[5] = {'T', 'K', 'V', '1', TINYKV_RECORD_PUT};
     db_path(path, sizeof(path), "torn.db");
-    fd = tkv_open_log(path, 0, NULL);
+    fd = tkv_open_log(path, 0, 0600, NULL);
     assert(fd >= 0);
     /* Five valid header bytes then EOF is an incomplete record. */
     assert(tkv_write_all(fd, partial, sizeof(partial)) == 0);
@@ -174,7 +175,7 @@ static void test_replay_builds_index(void)
     size_t length;
     int fd;
     db_path(path, sizeof(path), "replay.db");
-    fd = tkv_open_log(path, 0, NULL);
+    fd = tkv_open_log(path, 0, 0600, NULL);
     assert(fd >= 0);
     /* A log with duplicates, tombstones, and empty values. */
     assert(tkv_log_append(fd, TINYKV_RECORD_PUT, "alpha", 5, "one", 3,
@@ -208,7 +209,7 @@ static void test_replay_over_limit_is_corruption(void)
     size_t length;
     int fd;
     db_path(path, sizeof(path), "limits.db");
-    fd = tkv_open_log(path, 0, NULL);
+    fd = tkv_open_log(path, 0, 0600, NULL);
     assert(fd >= 0);
     assert(tkv_log_append(fd, TINYKV_RECORD_PUT, "big", 3, "", 0,
                           &loose, &offset, &length) == 0);
@@ -355,7 +356,7 @@ static void test_write_reclaims_torn_tail(void)
     assert(tinykv_put(db, "keep", 4, "me", 2) == TINYKV_OK);
     tinykv_close(db);
     /* Simulate a crash mid-append: five header bytes, no payload. */
-    fd = tkv_open_log(path, 0, NULL);
+    fd = tkv_open_log(path, 0, 0600, NULL);
     assert(fd >= 0);
     assert(lseek(fd, 0, SEEK_END) >= 0);
     assert(tkv_write_all(fd, partial, sizeof(partial)) == 0);
@@ -444,7 +445,7 @@ static void test_stats_track_activity(void)
     tinykv_close(db);
 
     /* A torn tail shows up as discarded bytes until the next write. */
-    fd = tkv_open_log(path, 0, NULL);
+    fd = tkv_open_log(path, 0, 0600, NULL);
     assert(fd >= 0);
     assert(lseek(fd, 0, SEEK_END) >= 0);
     assert(tkv_write_all(fd, partial, sizeof(partial)) == 0);
@@ -519,7 +520,7 @@ static void test_compaction_with_torn_tail(void)
     assert(tinykv_open(path, NULL, &db) == TINYKV_OK);
     assert(tinykv_put(db, "alpha", 5, "one", 3) == TINYKV_OK);
     tinykv_close(db);
-    fd = tkv_open_log(path, 0, NULL);
+    fd = tkv_open_log(path, 0, 0600, NULL);
     assert(fd >= 0);
     assert(lseek(fd, 0, SEEK_END) >= 0);
     assert(tkv_write_all(fd, partial, sizeof(partial)) == 0);
@@ -568,7 +569,7 @@ static void test_verify_classifies_logs(void)
     assert(good == 25 && good == file_size_of(path));
 
     /* Torn tail: reported, not corruption. */
-    fd = tkv_open_log(path, 0, NULL);
+    fd = tkv_open_log(path, 0, 0600, NULL);
     assert(fd >= 0);
     assert(lseek(fd, 0, SEEK_END) >= 0);
     assert(tkv_write_all(fd, (const uint8_t[]){'T', 'K', 'V', '1', 1}, 5) == 0);
@@ -578,7 +579,7 @@ static void test_verify_classifies_logs(void)
 
     /* Mid-file corruption: reported with the offending offset. */
     {
-        int rw = tkv_open_log(path, 0, NULL);
+        int rw = tkv_open_log(path, 0, 0600, NULL);
         uint8_t scratch = 0x7F;
         assert(rw >= 0);
         assert(pwrite(rw, &scratch, 1, 20) == 1);
@@ -607,7 +608,7 @@ static void test_repair_is_non_destructive(void)
     tinykv_close(db);
 
     /* A torn tail: 8 bytes of an interrupted record. */
-    fd = tkv_open_log(path, 0, NULL);
+    fd = tkv_open_log(path, 0, 0600, NULL);
     assert(fd >= 0);
     assert(lseek(fd, 0, SEEK_END) >= 0);
     assert(tkv_write_all(fd, (const uint8_t[]){'T', 'K', 'V', '1', 1, 0, 0, 0},
@@ -660,7 +661,7 @@ static void test_repair_stops_at_midfile_corruption(void)
     assert(tinykv_put(db, "gamma", 5, "three", 5) == TINYKV_OK);
     tinykv_close(db);
     /* Corrupt the second record's payload (offset 25+17 lands in beta). */
-    fd = tkv_open_log(path, 0, NULL);
+    fd = tkv_open_log(path, 0, 0600, NULL);
     assert(fd >= 0);
     assert(pwrite(fd, (const uint8_t[]){0x7F}, 1, 42) == 1);
     close(fd);
@@ -1097,7 +1098,7 @@ static void test_every_single_byte_corruption_is_classified(void)
      * happen. */
     for (position = 0; position < 49; ++position) {
         tinykv_status status;
-        fd = tkv_open_log(path, 0, NULL);
+        fd = tkv_open_log(path, 0, 0600, NULL);
         assert(fd >= 0);
         {
             uint8_t original, flipped;
@@ -1123,7 +1124,7 @@ static void test_every_single_byte_corruption_is_classified(void)
             assert(db == NULL);
         }
         /* Restore the original byte. */
-        fd = tkv_open_log(path, 0, NULL);
+        fd = tkv_open_log(path, 0, 0600, NULL);
         assert(fd >= 0);
         {
             uint8_t original;
@@ -1649,6 +1650,49 @@ static void test_put_multi_mixed_results(void)
     tinykv_close(db);
 }
 
+static void test_file_mode_variations(void)
+{
+    char path[128];
+    tinykv_db *db = NULL;
+    tinykv_options options;
+    struct stat st;
+    void *value = NULL;
+    size_t value_length = 0;
+    /* Group-readable creation. */
+    options = tinykv_options_default_for_test();
+    options.file_mode = 0640;
+    db_path(path, sizeof(path), "mode0640.db");
+    assert(tinykv_open(path, &options, &db) == TINYKV_OK);
+    assert(tinykv_put(db, "alpha", 5, "one", 3) == TINYKV_OK);
+    assert(stat(path, &st) == 0);
+    assert((st.st_mode & 0777) == 0640);
+    tinykv_close(db);
+    /* The mode applies to compaction replacements too. */
+    assert(tinykv_open(path, &options, &db) == TINYKV_OK);
+    assert(tinykv_compact(db) == TINYKV_OK);
+    assert(stat(path, &st) == 0);
+    assert((st.st_mode & 0777) == 0640);
+    assert(tinykv_get(db, "alpha", 5, &value, &value_length) == TINYKV_OK);
+    assert(value_length == 3);
+    free(value);
+    tinykv_close(db);
+    /* Bad modes are rejected: no owner write, no owner read, world
+     * write. */
+    options.file_mode = 0006;
+    assert(tinykv_open(path, &options, &db) == TINYKV_ERR_INVALID);
+    options.file_mode = 0200;
+    assert(tinykv_open(path, &options, &db) == TINYKV_ERR_INVALID);
+    options.file_mode = 0642;
+    assert(tinykv_open(path, &options, &db) == TINYKV_ERR_INVALID);
+    /* A world-readable mode is allowed. */
+    options.file_mode = 0644;
+    db_path(path, sizeof(path), "mode0644.db");
+    assert(tinykv_open(path, &options, &db) == TINYKV_OK);
+    tinykv_close(db);
+    assert(stat(path, &st) == 0);
+    assert((st.st_mode & 0777) == 0644);
+}
+
 int main(void)
 {
     assert(mkdtemp(temp_dir) != NULL);
@@ -1693,6 +1737,7 @@ int main(void)
     test_iter_seek_positions_binary();
     test_delete_multi_mixed_results();
     test_put_multi_mixed_results();
+    test_file_mode_variations();
     test_iter_remaining_tracks_progress();
     test_get_multi_resolves_batches();
     test_auto_compact_threshold_boundary();

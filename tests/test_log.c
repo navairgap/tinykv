@@ -68,7 +68,7 @@ static void test_append_and_scan_roundtrip(void)
     int fd;
     memset(&got, 0, sizeof(got));
     snprintf(path, sizeof(path), "%s/kv.log", temp_dir);
-    fd = tkv_open_log(path, 0, NULL);
+    fd = tkv_open_log(path, 0, 0600, NULL);
     assert(fd >= 0);
 
     assert(tkv_log_append(fd, TINYKV_RECORD_PUT, "alpha", 5, "one", 3,
@@ -108,7 +108,7 @@ static void test_scan_detects_truncated_tail(void)
     int fd;
     memset(&got, 0, sizeof(got));
     snprintf(path, sizeof(path), "%s/tail.log", temp_dir);
-    fd = tkv_open_log(path, 0, NULL);
+    fd = tkv_open_log(path, 0, 0600, NULL);
     assert(fd >= 0);
     assert(tkv_log_append(fd, TINYKV_RECORD_PUT, "alpha", 5, "one", 3,
                           &limits, &offset, &length) == 0);
@@ -141,7 +141,7 @@ static void test_scan_reports_midfile_corruption(void)
     int fd;
     memset(&got, 0, sizeof(got));
     snprintf(path, sizeof(path), "%s/corrupt.log", temp_dir);
-    fd = tkv_open_log(path, 0, NULL);
+    fd = tkv_open_log(path, 0, 0600, NULL);
     assert(fd >= 0);
     assert(tkv_log_append(fd, TINYKV_RECORD_PUT, "alpha", 5, "one", 3,
                           &limits, &offset, &length) == 0);
@@ -172,7 +172,7 @@ static void test_scan_reports_invalid_magic(void)
     int fd;
     memset(&got, 0, sizeof(got));
     snprintf(path, sizeof(path), "%s/magic.log", temp_dir);
-    fd = tkv_open_log(path, 0, NULL);
+    fd = tkv_open_log(path, 0, 0600, NULL);
     assert(fd >= 0);
     assert(tkv_log_append(fd, TINYKV_RECORD_PUT, "alpha", 5, "one", 3,
                           &limits, &offset, &length) == 0);
@@ -196,7 +196,7 @@ static void test_scan_empty_file_is_clean(void)
     int fd;
     memset(&got, 0, sizeof(got));
     snprintf(path, sizeof(path), "%s/empty.log", temp_dir);
-    fd = tkv_open_log(path, 0, NULL);
+    fd = tkv_open_log(path, 0, 0600, NULL);
     assert(fd >= 0);
     assert(tkv_log_scan(fd, &limits, capture, &got, &result) == 0);
     assert(got.count == 0 && result.stop_status == TINYKV_RECORD_OK);
@@ -217,7 +217,7 @@ static void test_scan_handles_records_larger_than_chunk(void)
     memset(&got, 0, sizeof(got));
     memset(big, 'A', sizeof(big));
     snprintf(path, sizeof(path), "%s/big.log", temp_dir);
-    fd = tkv_open_log(path, 0, NULL);
+    fd = tkv_open_log(path, 0, 0600, NULL);
     assert(fd >= 0);
     assert(tkv_log_append(fd, TINYKV_RECORD_PUT, "big", 3, big, sizeof(big),
                           &limits, &offset, &length) == 0);
@@ -260,7 +260,7 @@ static void test_scan_survives_every_truncation(void)
     size_t length;
     int fd, iterations = 0;
     snprintf(path, sizeof(path), "%s/matrix.log", temp_dir);
-    fd = tkv_open_log(path, 0, NULL);
+    fd = tkv_open_log(path, 0, 0600, NULL);
     assert(fd >= 0);
     assert(tkv_log_append(fd, TINYKV_RECORD_PUT, "alpha", 5, "one", 3,
                           &limits, &offset, &length) == 0);
@@ -319,7 +319,7 @@ static void test_scan_callback_can_abort(void)
     size_t length;
     int fd;
     snprintf(path, sizeof(path), "%s/abort.log", temp_dir);
-    fd = tkv_open_log(path, 0, NULL);
+    fd = tkv_open_log(path, 0, 0600, NULL);
     assert(fd >= 0);
     assert(tkv_log_append(fd, TINYKV_RECORD_PUT, "alpha", 5, "one", 3,
                           &limits, &offset, &length) == 0);

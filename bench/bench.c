@@ -132,6 +132,7 @@ int main(int argc, char **argv)
     options.read_only = 0;
     options.lock = 1;
     options.auto_compact_dead_ratio = 0.0;
+    options.file_mode = 0600;
 
     if (tinykv_open("/tmp/tinykv-bench.tkv", &options, &db) != TINYKV_OK) {
         fprintf(stderr, "bench: open failed\n");

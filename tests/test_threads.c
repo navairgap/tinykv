@@ -94,6 +94,7 @@ int main(void)
         options.create_if_missing = 1;
         options.read_only = 0;
         options.lock = 1;
+        options.file_mode = 0600;
         assert(tinykv_open(path, &options, &db) == TINYKV_OK);
     }
     for (t = 0; t < THREADS; ++t) {

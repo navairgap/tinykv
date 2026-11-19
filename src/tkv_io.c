@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/types.h>
 #include <sys/file.h>
 #include <unistd.h>
 
@@ -99,7 +100,8 @@ off_t tkv_file_size(int fd)
     return st.st_size;
 }
 
-int tkv_open_log(const char *path, int read_only, int *created)
+int tkv_open_log(const char *path, int read_only, int created_mode,
+                 int *created)
 {
     int fd;
     if (read_only) {
@@ -110,7 +112,8 @@ int tkv_open_log(const char *path, int read_only, int *created)
         return fd;
     }
     do
-        fd = open(path, O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+        fd = open(path, O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC,
+                  (mode_t)created_mode);
     while (fd < 0 && errno == EINTR);
     if (fd >= 0) {
         if (created != NULL) *created = 1;

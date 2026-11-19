@@ -52,6 +52,10 @@ typedef struct {
     /* Compact on close when dead bytes reach this share of the file
      * (0.0-1.0). 0 disables; default 0. */
     double auto_compact_dead_ratio;
+    /* Permissions for the database file on creation, e.g. 0600 (the
+     * default) or 0640 to let a group read. Must keep owner read/write
+     * and must not be world-writable. Sidecar files stay 0600. */
+    uint32_t file_mode;
 } tinykv_options;
 
 typedef struct {

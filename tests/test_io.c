@@ -41,7 +41,7 @@ static void test_write_pread_size_roundtrip(void)
     uint8_t out[3];
     int fd, created = -1;
     snprintf(path, sizeof(path), "%s/kv.log", temp_dir);
-    fd = tkv_open_log(path, 0, &created);
+    fd = tkv_open_log(path, 0, 0600, &created);
     assert(fd >= 0 && created == 1);
     assert(tkv_write_all(fd, payload, sizeof(payload)) == 0);
     assert(tkv_file_size(fd) == (off_t)sizeof(payload));
@@ -51,12 +51,12 @@ static void test_write_pread_size_roundtrip(void)
     assert(tkv_pread_all(fd, out, 2, sizeof(payload)) == -1);
     /* Reopening an existing file must not report creation. */
     {
-        int second = tkv_open_log(path, 0, &created);
+        int second = tkv_open_log(path, 0, 0600, &created);
         assert(second >= 0 && created == 0);
         close(second);
     }
     {
-        int readonly = tkv_open_log(path, 1, NULL);
+        int readonly = tkv_open_log(path, 1, 0600, NULL);
         assert(readonly >= 0);
         close(readonly);
     }
@@ -78,7 +78,7 @@ static void test_pwrite_all_is_positional(void)
     off_t before;
     uint8_t out[5];
     snprintf(path, sizeof(path), "%s/pwrite-target", temp_dir);
-    fd = tkv_open_log(path, 0, NULL);
+    fd = tkv_open_log(path, 0, 0600, NULL);
     assert(fd >= 0);
     assert(tkv_write_all(fd, "abcde", 5) == 0);
     before = lseek(fd, 0, SEEK_CUR);
@@ -94,7 +94,7 @@ static void test_pwrite_all_is_positional(void)
     assert(tkv_pwrite_all(fd, payload, 0, 100) == 0);
     assert(tkv_file_size(fd) == 7);
     /* Reads past the end still fail. */
-    other = tkv_open_log(path, 1, NULL);
+    other = tkv_open_log(path, 1, 0600, NULL);
     assert(other >= 0);
     assert(tkv_pread_all(other, out, 1, 100) == -1);
     close(other);
@@ -106,7 +106,7 @@ static void test_lock_is_exclusive(void)
     char path[128];
     int first, second;
     snprintf(path, sizeof(path), "%s/lockfile", temp_dir);
-    first = tkv_open_log(path, 0, NULL);
+    first = tkv_open_log(path, 0, 0600, NULL);
     assert(first >= 0);
     second = open(path, O_RDWR | O_CLOEXEC);
     assert(second >= 0);
@@ -125,7 +125,7 @@ static void test_lock_blocks_other_processes(void)
     int fd, status = -1;
     pid_t pid;
     snprintf(path, sizeof(path), "%s/crossproc.lock", temp_dir);
-    fd = tkv_open_log(path, 0, NULL);
+    fd = tkv_open_log(path, 0, 0600, NULL);
     assert(fd >= 0);
     assert(tkv_lock_try(fd, 1) == 0);
     fflush(NULL);
@@ -133,7 +133,7 @@ static void test_lock_blocks_other_processes(void)
     if (pid == 0) {
         /* Child: a different open-file description, a different process.
          * Exit 0 if the exclusive lock was refused, 1 if it was granted. */
-        int other = tkv_open_log(path, 0, NULL);
+        int other = tkv_open_log(path, 0, 0600, NULL);
         if (other < 0) _exit(2);
         _exit(tkv_lock_try(other, 1) == -1 ? 0 : 1);
     }
@@ -144,7 +144,7 @@ static void test_lock_blocks_other_processes(void)
     tkv_unlock(fd);
     pid = fork();
     if (pid == 0) {
-        int other = tkv_open_log(path, 0, NULL);
+        int other = tkv_open_log(path, 0, 0600, NULL);
         if (other < 0) _exit(2);
         _exit(tkv_lock_try(other, 1) == 0 ? 0 : 1);
     }
@@ -160,7 +160,7 @@ static void test_rename_sync_and_copy(void)
     snprintf(from, sizeof(from), "%s/orig.log", temp_dir);
     snprintf(to, sizeof(to), "%s/moved.log", temp_dir);
     snprintf(backup, sizeof(backup), "%s/orig.log.bak", temp_dir);
-    fd = tkv_open_log(from, 0, NULL);
+    fd = tkv_open_log(from, 0, 0600, NULL);
     assert(fd >= 0);
     assert(tkv_write_all(fd, "hello", 5) == 0);
     close(fd);
@@ -169,7 +169,7 @@ static void test_rename_sync_and_copy(void)
     assert(access(to, F_OK) == 0);
     assert(tkv_copy_file(to, backup) == 0);
     {
-        int check = tkv_open_log(backup, 1, NULL);
+        int check = tkv_open_log(backup, 1, 0600, NULL);
         uint8_t out[6];
         assert(check >= 0);
         assert(tkv_file_size(check) == 5);
@@ -177,7 +177,7 @@ static void test_rename_sync_and_copy(void)
         assert(memcmp(out, "hello", 5) == 0);
         close(check);
         /* Truncation needs a writable descriptor. */
-        check = tkv_open_log(backup, 0, NULL);
+        check = tkv_open_log(backup, 0, 0600, NULL);
         assert(check >= 0);
         assert(tkv_truncate_file(check, 3) == 0);
         assert(tkv_file_size(check) == 3);

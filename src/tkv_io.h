@@ -20,9 +20,11 @@ int tkv_fsync_file(int fd);
 /* fsync the directory that contains path, so creates/renames persist. */
 int tkv_fsync_path(const char *path);
 off_t tkv_file_size(int fd);
-/* Open the log read-only or read-write, creating it with mode 0600.
- * *created (optional) reports whether this call created the file. */
-int tkv_open_log(const char *path, int read_only, int *created);
+/* Open the log read-only or read-write, creating it with the given
+ * mode (only meaningful for new files). *created (optional) reports
+ * whether this call created the file. */
+int tkv_open_log(const char *path, int read_only, int created_mode,
+                 int *created);
 int tkv_lock_try(int fd, int exclusive);
 void tkv_unlock(int fd);
 /* rename(2) followed by an fsync of the destination directory. */
