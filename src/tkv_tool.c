@@ -372,15 +372,18 @@ static int cmd_compact(int argc, char **argv)
  * skips empty and tab-less lines. */
 static tinykv_status import_lines(tinykv_db *db, FILE *stream,
                                   unsigned long long *imported,
-                                  unsigned long long *skipped)
+                                  unsigned long long *skipped,
+                                  unsigned long long *failed_line)
 {
     char *line = NULL;
     size_t capacity = 0;
     ssize_t got;
     tinykv_status status = TINYKV_OK;
+    unsigned long long line_number = 0;
     while ((got = getline(&line, &capacity, stream)) >= 0) {
         char *tab, *key = line, *value;
         size_t key_length, value_length;
+        line_number++;
         while (got > 0 && (line[got - 1] == '\n' || line[got - 1] == '\r'))
             line[--got] = '\0';
         if (got == 0) continue;
@@ -395,8 +398,10 @@ static tinykv_status import_lines(tinykv_db *db, FILE *stream,
         value_length = strlen(value);
         status = tinykv_put(db, key, key_length, value, value_length);
         if (status != TINYKV_OK) {
-            fprintf(stderr, "tinykv: put failed for key '%s': %s\n", key,
-                    tinykv_status_string(status));
+            fprintf(stderr,
+                    "tinykv: line %llu: put failed for key '%s': %s\n",
+                    line_number, key, tinykv_status_string(status));
+            if (failed_line != NULL) *failed_line = line_number;
             break;
         }
         (*imported)++;
@@ -423,10 +428,17 @@ static tinykv_status open_for_load(const char *database,
 
 static int finish_load(const char *database, tinykv_db *db,
                        unsigned long long imported,
-                       unsigned long long skipped, tinykv_status status)
+                       unsigned long long skipped,
+                       unsigned long long failed_line,
+                       tinykv_status status)
 {
     tinykv_close(db);
-    if (status != TINYKV_OK) return report(database, status), exit_code_for(status);
+    if (status != TINYKV_OK) {
+        if (failed_line != 0)
+            fprintf(stderr, "tinykv: %s: stopped at input line %llu\n",
+                    database, failed_line);
+        return report(database, status), exit_code_for(status);
+    }
     printf("imported %llu key(s)%s\n", imported,
            skipped ? " (some lines skipped: no TAB)" : "");
     return 0;
@@ -463,10 +475,11 @@ static int cmd_batch(int argc, char **argv)
     } else if (argc > 3) {
         return usage(stderr), 1;
     }
+    unsigned long long failed_line = 0;
     status = open_for_load(database, options.sync, &db);
     if (status != TINYKV_OK) return report(database, status), exit_code_for(status);
-    status = import_lines(db, stdin, &imported, &skipped);
-    return finish_load(database, db, imported, skipped, status);
+    status = import_lines(db, stdin, &imported, &skipped, &failed_line);
+    return finish_load(database, db, imported, skipped, failed_line, status);
 }
 
 /* Import from a TAB-separated file. */
@@ -474,7 +487,7 @@ static int cmd_import(int argc, char **argv)
 {
     tinykv_db *db = NULL;
     tinykv_status status;
-    unsigned long long imported = 0, skipped = 0;
+    unsigned long long imported = 0, skipped = 0, failed_line = 0;
     FILE *stream;
     if (argc != 3) return usage(stderr), 1;
     status = open_for_load(argv[1], TINYKV_SYNC_ON_CLOSE, &db);
@@ -485,9 +498,9 @@ static int cmd_import(int argc, char **argv)
         tinykv_close(db);
         return 6;
     }
-    status = import_lines(db, stream, &imported, &skipped);
+    status = import_lines(db, stream, &imported, &skipped, &failed_line);
     fclose(stream);
-    return finish_load(argv[1], db, imported, skipped, status);
+    return finish_load(argv[1], db, imported, skipped, failed_line, status);
 }
 
 /* Dump every live key/value as TAB-separated lines (batch-compatible). */

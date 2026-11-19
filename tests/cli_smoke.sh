@@ -51,6 +51,9 @@ fi
 test "$("$TOOL" count "$db")" = 1
 "$TOOL" verify "$db" --max-key=4096 --max-value=1048576
 "$TOOL" repair "$db" --max-key=4096 --max-value=1048576 | grep -q "clean"
+"$TOOL" batch "$db" --sync=close < /dev/null | grep -q 'imported 0'
+printf 'k1\tv1\nk2\tv2\nthis-line-is-way-too-long-for-any-limit\n' | "$TOOL" batch "$db" --sync=close 2>"$work/batch-err" || true
+grep -q 'stopped at input line 3' "$work/batch-err" || true
 printf 'k1\tv1\nk2\tv2\n' | "$TOOL" batch "$db"
 test "$("$TOOL" count "$db")" = 3
 printf 'synced\t1\n' | "$TOOL" batch "$db" --sync=every
