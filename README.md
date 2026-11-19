@@ -59,7 +59,17 @@ Prefix iteration filters namespaces without reading other keys:
 tinykv_iter *iter;
 tinykv_iter_new_prefix(db, "user:", 5, &iter);
 /* every "user:*" key, sorted, values re-read on each step */
+tinykv_iter_seek(iter, "user:5", 6);   /* jump to any key */
 tinykv_iter_free(iter);
+```
+
+Batched calls resolve whole arrays under one lock acquisition:
+
+```c
+tinykv_get_result reads[16];
+tinykv_get_multi(db, reads, 16);   /* per-entry status, malloc'd values */
+tinykv_put_multi(db, puts, 16);
+tinykv_delete_multi(db, removals, 16);
 ```
 
 Build and install:
