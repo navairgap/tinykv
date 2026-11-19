@@ -26,6 +26,10 @@ versions [Semantic Versioning](https://semver.org/).
 ### Fixed
 
 - Index capacity is released when a database's index is cleared
+- Compaction releases the handle mutex when its temp file cannot be
+  created (found by ThreadSanitizer); previously the handle stayed
+  locked after a failed compaction on an unwritable directory
+- `tkv_copy_file` refuses self-copies instead of truncating the file
 - `list` options are fully initialized (uninitialized
   `auto_compact_dead_ratio` field)
 
