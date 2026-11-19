@@ -20,8 +20,11 @@ already controls. In scope:
 - classification correctness: corruption must never be silently
   skipped, and repair must never modify the original before a verified
   replacement exists;
-- permission handling: database files are created 0600 and never widen
-  existing permissions.
+- permission handling: database files are created 0600 by default and
+  never widen existing permissions; the file_mode option may widen to
+  group/other read but must keep owner read/write and can never make a
+  database world-writable. Sidecar files (lock, backups, repair
+  outputs) stay 0600 regardless of the option.
 
 Out of scope for a v1 embedded store: network exposure (tinykv has
 none), multi-tenant host defenses beyond file permissions, side-channel
