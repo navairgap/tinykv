@@ -1635,6 +1635,36 @@ static void test_delete_multi_mixed_results(void)
     }
 }
 
+static void test_put_multi_empty_and_zero_keys(void)
+{
+    char path[128];
+    tinykv_db *db = NULL;
+    tinykv_put_request requests[3];
+    void *value = NULL;
+    size_t value_length = 0;
+    db_path(path, sizeof(path), "putmulti-empty.db");
+    assert(tinykv_open(path, NULL, &db) == TINYKV_OK);
+    /* Zero-length keys and empty values are legal in batches. */
+    requests[0].key = NULL; requests[0].key_length = 0;
+    requests[0].value = "root", requests[0].value_length = 4;
+    requests[1].key = "empty-val"; requests[1].key_length = 9;
+    requests[1].value = NULL; requests[1].value_length = 0;
+    requests[2].key = NULL; requests[2].key_length = 0;
+    requests[2].value = "new-root"; requests[2].value_length = 8;
+    assert(tinykv_put_multi(db, requests, 3) == TINYKV_OK);
+    assert(requests[0].status == TINYKV_OK);
+    assert(requests[1].status == TINYKV_OK);
+    assert(requests[2].status == TINYKV_OK);
+    assert(tinykv_get(db, NULL, 0, &value, &value_length) == TINYKV_OK);
+    assert(value_length == 8 && memcmp(value, "new-root", 8) == 0);
+    free(value);
+    assert(tinykv_get(db, "empty-val", 9, &value, &value_length) ==
+           TINYKV_OK);
+    assert(value != NULL && value_length == 0);
+    free(value);
+    tinykv_close(db);
+}
+
 static void test_put_multi_mixed_results(void)
 {
     char path[128];
@@ -1846,6 +1876,7 @@ int main(void)
     test_iter_seek_positions_binary();
     test_delete_multi_mixed_results();
     test_put_multi_mixed_results();
+    test_put_multi_empty_and_zero_keys();
     test_file_mode_variations();
     test_compact_failure_leaves_original();
     test_readers_in_other_processes();
