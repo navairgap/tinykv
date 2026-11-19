@@ -1832,6 +1832,30 @@ static void test_readers_in_other_processes(void)
     tinykv_close(db);
 }
 
+static void test_seek_updates_remaining(void)
+{
+    char path[128];
+    tinykv_db *db = NULL;
+    tinykv_iter *iter = NULL;
+    uint64_t remaining = 0;
+    db_path(path, sizeof(path), "seek-remaining.db");
+    assert(tinykv_open(path, NULL, &db) == TINYKV_OK);
+    assert(tinykv_put(db, "a", 1, "1", 1) == TINYKV_OK);
+    assert(tinykv_put(db, "b", 1, "2", 1) == TINYKV_OK);
+    assert(tinykv_put(db, "c", 1, "3", 1) == TINYKV_OK);
+    assert(tinykv_put(db, "d", 1, "4", 1) == TINYKV_OK);
+    assert(tinykv_iter_new(db, &iter) == TINYKV_OK);
+    assert(tinykv_iter_seek(iter, "c", 1) == TINYKV_OK);
+    assert(tinykv_iter_remaining(iter, &remaining) == TINYKV_OK);
+    assert(remaining == 2); /* c and d remain after seeking to c */
+    assert(tinykv_iter_seek(iter, "a", 1) == TINYKV_OK);
+    assert(tinykv_iter_remaining(iter, &remaining) == TINYKV_OK);
+    assert(remaining == 4); /* seeking back restores the full pass */
+    /* The seek itself never produces values, so no next() is needed. */
+    tinykv_iter_free(iter);
+    tinykv_close(db);
+}
+
 int main(void)
 {
     assert(mkdtemp(temp_dir) != NULL);
@@ -1874,6 +1898,7 @@ int main(void)
     test_iteration_across_compaction();
     test_exists_checks_presence_only();
     test_iter_seek_positions_binary();
+    test_seek_updates_remaining();
     test_delete_multi_mixed_results();
     test_put_multi_mixed_results();
     test_put_multi_empty_and_zero_keys();
