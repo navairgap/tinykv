@@ -178,6 +178,41 @@ int main(int argc, char **argv)
     start = now_seconds();
     {
         enum { BATCH = 16 };
+        tinykv_put_request batch[BATCH];
+        char mkey[32];
+        char *mval = (char *)malloc(value_size);
+        long batches = count / BATCH;
+        long b, j;
+        if (mval == NULL) {
+            result = 1;
+            goto out_close;
+        }
+        memcpy(mval, value, value_size);
+        for (b = 0; b < batches; ++b) {
+            for (j = 0; j < BATCH; ++j) {
+                /* Overwrite the same keys get_multi read: a write-heavy
+                 * batch on live data. */
+                batch[j].key = mkey;
+                batch[j].key_length =
+                    (size_t)snprintf(mkey, sizeof(mkey), "key-%08ld",
+                                     b * BATCH + j);
+                batch[j].value = mval;
+                batch[j].value_length = value_size;
+            }
+            if (tinykv_put_multi(db, batch, BATCH) != TINYKV_OK) {
+                fprintf(stderr, "bench: put_multi failed\n");
+                free(mval);
+                result = 1;
+                goto out_close;
+            }
+        }
+        free(mval);
+        report("put_multi (16)", batches * BATCH, now_seconds() - start);
+    }
+
+    start = now_seconds();
+    {
+        enum { BATCH = 16 };
         tinykv_get_result batch[BATCH];
         long batches = count / BATCH;
         long b, j;
