@@ -10,9 +10,15 @@ versions [Semantic Versioning](https://semver.org/).
 
 - `tinykv_exists` presence checks answered from the index alone
 - `tinykv_get_multi` batched reads under one lock acquisition
+- `tinykv_put_multi` and `tinykv_delete_multi` batched writes
+- `tinykv_iter_seek` random-position iteration via binary search
+- `file_mode` option for database creation permissions (compaction
+  honors it; sidecars stay 0600)
 - `tinykv_iter_remaining` upper-bound iteration progress
-- CLI `exists`, `count [prefix]`, `verify --json`, and
-  `get --into=FILE` for binary values
+- CLI `exists`, `count [prefix]`, `verify --json` (with
+  `discarded_bytes`), and `get --into=FILE` for binary values
+- `batch`/`import` failures name the offending input line
+- `tinykv(1)` man page installed by `make install`
 - `verify`/`repair` accept `--max-key`/`--max-value` for custom-limit
   databases
 - Benchmark phases for `exists` (~3.3M ops/s) and batched reads
@@ -27,6 +33,9 @@ versions [Semantic Versioning](https://semver.org/).
 
 - Export/import double round-trip property test and binary-value CLI
   output tests
+- Compaction failure path (read-only directory), sparse-file hole
+  classification, multi-process readers during writes, batched writes
+  under threads, iterator seek positioning
 - Auto-compact threshold boundary, batch-under-delete, prefix
   iteration after concurrent writes, and iterator progress tests
 
