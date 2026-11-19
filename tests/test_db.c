@@ -8,6 +8,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
+#include <unistd.h>
 #include <unistd.h>
 
 static char temp_dir[64] = "/tmp/tinykv-db-XXXXXX";
@@ -1718,6 +1720,78 @@ static void test_compact_failure_leaves_original(void)
     assert((uint64_t)st.st_size == 25 + 26); /* alpha + after, no compact */
 }
 
+static void test_readers_in_other_processes(void)
+{
+    char path[128];
+    tinykv_db *db = NULL;
+    char key[32], value[32];
+    int i;
+    pid_t readers[4];
+    db_path(path, sizeof(path), "multiproc.db");
+    /* Pre-seed 50 keys, then keep writing while forked read-only
+     * children verify the seed over and over. */
+    assert(tinykv_open(path, NULL, &db) == TINYKV_OK);
+    for (i = 0; i < 50; ++i) {
+        snprintf(key, sizeof(key), "seed-%03d", i);
+        snprintf(value, sizeof(value), "value-%03d", i);
+        assert(tinykv_put(db, key, strlen(key), value, strlen(value)) ==
+               TINYKV_OK);
+    }
+    fflush(NULL);
+    for (i = 0; i < 4; ++i) {
+        pid_t pid = fork();
+        if (pid == 0) {
+            /* Child: read-only handle, no lock; the seed must always
+             * verify, writes after the child opened are invisible. */
+            tinykv_options options = tinykv_options_default_for_test();
+            tinykv_db *reader = NULL;
+            int round;
+            options.read_only = 1;
+            if (tinykv_open(path, &options, &reader) != TINYKV_OK) _exit(1);
+            for (round = 0; round < 20; ++round) {
+                int j;
+                for (j = 0; j < 50; ++j) {
+                    char rkey[32], rvalue[32];
+                    void *got = NULL;
+                    size_t got_length = 0;
+                    snprintf(rkey, sizeof(rkey), "seed-%03d", j);
+                    snprintf(rvalue, sizeof(rvalue), "value-%03d", j);
+                    if (tinykv_get(reader, rkey, strlen(rkey), &got,
+                                   &got_length) != TINYKV_OK)
+                        _exit(2);
+                    if (got_length != strlen(rvalue) ||
+                        memcmp(got, rvalue, got_length) != 0)
+                        _exit(3);
+                    free(got);
+                }
+            }
+            tinykv_close(reader);
+            _exit(0);
+        }
+        assert(pid > 0);
+        readers[i] = pid;
+    }
+    for (i = 50; i < 100; ++i) {
+        snprintf(key, sizeof(key), "seed-%03d", i);
+        snprintf(value, sizeof(value), "value-%03d", i);
+        assert(tinykv_put(db, key, strlen(key), value, strlen(value)) ==
+               TINYKV_OK);
+    }
+    for (i = 0; i < 4; ++i) {
+        int status = -1;
+        assert(waitpid(readers[i], &status, 0) == readers[i]);
+        assert(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+    }
+    tinykv_close(db);
+    /* Everything, including post-fork writes, replays cleanly. */
+    assert(tinykv_open(path, NULL, &db) == TINYKV_OK);
+    {
+        uint64_t count = 0;
+        assert(tinykv_count(db, &count) == TINYKV_OK && count == 100);
+    }
+    tinykv_close(db);
+}
+
 int main(void)
 {
     assert(mkdtemp(temp_dir) != NULL);
@@ -1764,6 +1838,7 @@ int main(void)
     test_put_multi_mixed_results();
     test_file_mode_variations();
     test_compact_failure_leaves_original();
+    test_readers_in_other_processes();
     test_iter_remaining_tracks_progress();
     test_get_multi_resolves_batches();
     test_auto_compact_threshold_boundary();
