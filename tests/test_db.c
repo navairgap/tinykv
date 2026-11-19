@@ -1693,6 +1693,31 @@ static void test_file_mode_variations(void)
     assert((st.st_mode & 0777) == 0644);
 }
 
+static void test_compact_failure_leaves_original(void)
+{
+    char path[160];
+    tinykv_db *db = NULL;
+    void *value = NULL;
+    size_t value_length = 0;
+    struct stat st;
+    /* Make the containing directory read-only so the compaction temp
+     * file cannot be created. */
+    snprintf(path, sizeof(path), "%s/fail-compact.db", temp_dir);
+    assert(tinykv_open(path, NULL, &db) == TINYKV_OK);
+    assert(tinykv_put(db, "alpha", 5, "one", 3) == TINYKV_OK);
+    assert(chmod(temp_dir, 0555) == 0);
+    assert(tinykv_compact(db) == TINYKV_ERR_IO);
+    assert(chmod(temp_dir, 0755) == 0);
+    /* The original log and the handle keep working untouched. */
+    assert(tinykv_get(db, "alpha", 5, &value, &value_length) == TINYKV_OK);
+    assert(value_length == 3);
+    free(value);
+    assert(tinykv_put(db, "after", 5, "fail", 4) == TINYKV_OK);
+    tinykv_close(db);
+    assert(stat(path, &st) == 0);
+    assert((uint64_t)st.st_size == 25 + 26); /* alpha + after, no compact */
+}
+
 int main(void)
 {
     assert(mkdtemp(temp_dir) != NULL);
@@ -1738,6 +1763,7 @@ int main(void)
     test_delete_multi_mixed_results();
     test_put_multi_mixed_results();
     test_file_mode_variations();
+    test_compact_failure_leaves_original();
     test_iter_remaining_tracks_progress();
     test_get_multi_resolves_batches();
     test_auto_compact_threshold_boundary();
