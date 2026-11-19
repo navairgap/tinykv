@@ -70,6 +70,34 @@ static void test_write_pread_size_roundtrip(void)
     }
 }
 
+static uint64_t tkv_file_size_of(const char *path)
+{
+    struct stat st;
+    assert(stat(path, &st) == 0);
+    return (uint64_t)st.st_size;
+}
+
+static void test_copy_file_edge_cases(void)
+{
+    char empty[128], missing[128], dest[128];
+    int fd;
+    snprintf(empty, sizeof(empty), "%s/empty-src", temp_dir);
+    snprintf(missing, sizeof(missing), "%s/no-such-src", temp_dir);
+    snprintf(dest, sizeof(dest), "%s/copy-dest", temp_dir);
+    /* An empty source copies to an empty destination. */
+    fd = tkv_open_log(empty, 0, 0600, NULL);
+    assert(fd >= 0);
+    close(fd);
+    assert(tkv_copy_file(empty, dest) == 0);
+    assert(tkv_file_size_of(dest) == 0);
+    /* A missing source fails and leaves no destination behind. */
+    assert(tkv_copy_file(missing, dest) == -1);
+    assert(access(dest, F_OK) == 0); /* the earlier copy still exists */
+    /* A self-copy must not truncate the file into nothing. */
+    assert(tkv_copy_file(dest, dest) == -1);
+    assert(tkv_file_size_of(dest) == 0);
+}
+
 static void test_pwrite_all_is_positional(void)
 {
     char path[128];
@@ -202,6 +230,7 @@ int main(void)
 {
     make_temp_dir();
     test_write_pread_size_roundtrip();
+    test_copy_file_edge_cases();
     test_pwrite_all_is_positional();
     test_lock_is_exclusive();
     test_lock_blocks_other_processes();

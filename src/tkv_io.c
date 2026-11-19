@@ -147,7 +147,14 @@ int tkv_rename_sync(const char *from, const char *to)
 int tkv_copy_file(const char *from, const char *to)
 {
     uint8_t buffer[65536];
+    struct stat from_stat, to_stat;
     int src, dst = -1, result = -1;
+    /* Refuse a self-copy: the destination opens with O_TRUNC, which
+     * would destroy the source bytes before any are read. */
+    if (stat(from, &from_stat) == 0 && stat(to, &to_stat) == 0 &&
+        from_stat.st_dev == to_stat.st_dev &&
+        from_stat.st_ino == to_stat.st_ino)
+        return -1;
     do
         src = open(from, O_RDONLY | O_CLOEXEC);
     while (src < 0 && errno == EINTR);
