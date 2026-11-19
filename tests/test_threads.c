@@ -141,6 +141,41 @@ int main(void)
             free(got);
         }
     }
+    /* Batched writes from threads: put_multi/delete_multi share the
+     * same lock discipline as single ops. */
+    {
+        tinykv_put_request puts[8];
+        tinykv_key_result dels[4];
+        char bkey[32], bval[32];
+        int i;
+        for (i = 0; i < 8; ++i) {
+            snprintf(bkey, sizeof(bkey), "batch-%02d", i);
+            snprintf(bval, sizeof(bval), "batch-val-%02d", i);
+            puts[i].key = strdup(bkey);
+            puts[i].key_length = strlen(bkey);
+            puts[i].value = strdup(bval);
+            puts[i].value_length = strlen(bval);
+        }
+        assert(tinykv_put_multi(db, puts, 8) == TINYKV_OK);
+        for (i = 0; i < 8; ++i) {
+            free((void *)puts[i].key);
+            free((void *)puts[i].value);
+        }
+        for (i = 0; i < 4; ++i) {
+            snprintf(bkey, sizeof(bkey), "batch-%02d", i * 2);
+            dels[i].key = strdup(bkey);
+            dels[i].key_length = strlen(bkey);
+        }
+        assert(tinykv_delete_multi(db, dels, 4) == TINYKV_OK);
+        for (i = 0; i < 4; ++i) free((void *)dels[i].key);
+        {
+            uint64_t count = 0;
+            assert(tinykv_count(db, &count) == TINYKV_OK);
+            /* Thread survivors plus batch-01/03/05/07. */
+            assert(count == expected + 4);
+        }
+    }
+
     /* Prefix iteration after the concurrency storm: every surviving
      * key in a per-thread namespace must be visible and correct. */
     for (t = 0; t < THREADS; ++t) {
