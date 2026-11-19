@@ -855,6 +855,78 @@ out:
     return status;
 }
 
+tinykv_status tinykv_delete_multi(tinykv_db *db, tinykv_key_result *requests,
+                                  size_t count)
+{
+    tinykv_status overall = TINYKV_OK;
+    size_t i;
+    if (db == NULL || (requests == NULL && count != 0))
+        return TINYKV_ERR_INVALID;
+    if (db->fd < 0) return TINYKV_ERR_INVALID;
+    tkv_mutex_lock(&db->mutex);
+    for (i = 0; i < count; ++i) {
+        requests[i].status = TINYKV_ERR_INVALID;
+        if (requests[i].key == NULL && requests[i].key_length != 0)
+            continue;
+        if (db->options.read_only) continue;
+        if (tkv_index_find(&db->index, (const uint8_t *)requests[i].key,
+                           requests[i].key_length) == NULL) {
+            requests[i].status = TINYKV_ERR_NOT_FOUND;
+        } else {
+            requests[i].status = write_record(db, TINYKV_RECORD_DELETE,
+                                              requests[i].key,
+                                              requests[i].key_length, NULL, 0);
+        }
+        if (requests[i].status != TINYKV_OK && overall == TINYKV_OK)
+            overall = requests[i].status;
+    }
+    /* Skipped entries (invalid, read-only) surface in the overall
+     * status too. */
+    if (overall == TINYKV_OK)
+        for (i = 0; i < count; ++i)
+            if (requests[i].status != TINYKV_OK) {
+                overall = requests[i].status;
+                break;
+            }
+    tkv_mutex_unlock(&db->mutex);
+    return overall;
+}
+
+tinykv_status tinykv_put_multi(tinykv_db *db, tinykv_put_request *requests,
+                               size_t count)
+{
+    tinykv_status overall = TINYKV_OK;
+    size_t i;
+    if (db == NULL || (requests == NULL && count != 0))
+        return TINYKV_ERR_INVALID;
+    if (db->fd < 0) return TINYKV_ERR_INVALID;
+    tkv_mutex_lock(&db->mutex);
+    for (i = 0; i < count; ++i) {
+        requests[i].status = TINYKV_ERR_INVALID;
+        if ((requests[i].key == NULL && requests[i].key_length != 0) ||
+            (requests[i].value == NULL && requests[i].value_length != 0))
+            continue;
+        if (db->options.read_only) continue;
+        requests[i].status = write_record(db, TINYKV_RECORD_PUT,
+                                          requests[i].key,
+                                          requests[i].key_length,
+                                          requests[i].value,
+                                          requests[i].value_length);
+        if (requests[i].status != TINYKV_OK && overall == TINYKV_OK)
+            overall = requests[i].status;
+    }
+    /* Structurally invalid and read-only entries fail without writing;
+     * surface that in the overall status too. */
+    if (overall == TINYKV_OK)
+        for (i = 0; i < count; ++i)
+            if (requests[i].status != TINYKV_OK) {
+                overall = requests[i].status;
+                break;
+            }
+    tkv_mutex_unlock(&db->mutex);
+    return overall;
+}
+
 tinykv_status tinykv_get_into(const tinykv_db *db, const void *key,
                               size_t key_length, void *buffer,
                               size_t capacity, size_t *out_value_length)

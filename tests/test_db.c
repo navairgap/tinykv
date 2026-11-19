@@ -1588,6 +1588,67 @@ static void test_iter_seek_positions_binary(void)
     tinykv_close(db);
 }
 
+static void test_delete_multi_mixed_results(void)
+{
+    char path[128];
+    tinykv_db *db = NULL;
+    tinykv_key_result requests[4];
+    db_path(path, sizeof(path), "delmulti.db");
+    assert(tinykv_open(path, NULL, &db) == TINYKV_OK);
+    assert(tinykv_put(db, "a", 1, "1", 1) == TINYKV_OK);
+    assert(tinykv_put(db, "b", 1, "2", 1) == TINYKV_OK);
+    requests[0].key = "a"; requests[0].key_length = 1;
+    requests[1].key = "b"; requests[1].key_length = 1;
+    requests[2].key = "gone"; requests[2].key_length = 4;
+    requests[3].key = NULL; requests[3].key_length = 2;
+    assert(tinykv_delete_multi(db, requests, 4) == TINYKV_ERR_NOT_FOUND);
+    assert(requests[0].status == TINYKV_OK);
+    assert(requests[1].status == TINYKV_OK);
+    assert(requests[2].status == TINYKV_ERR_NOT_FOUND);
+    assert(requests[3].status == TINYKV_ERR_INVALID);
+    {
+        uint64_t count = 0;
+        assert(tinykv_count(db, &count) == TINYKV_OK && count == 0);
+    }
+    {
+        tinykv_options options = tinykv_options_default_for_test();
+        options.read_only = 1;
+        tinykv_close(db);
+        assert(tinykv_open(path, &options, &db) == TINYKV_OK);
+        requests[0].key = "a"; requests[0].key_length = 1;
+        assert(tinykv_delete_multi(db, requests, 1) == TINYKV_ERR_INVALID);
+        assert(requests[0].status == TINYKV_ERR_INVALID);
+        tinykv_close(db);
+    }
+}
+
+static void test_put_multi_mixed_results(void)
+{
+    char path[128];
+    tinykv_db *db = NULL;
+    tinykv_put_request requests[3];
+    uint64_t count = 0;
+    void *value = NULL;
+    size_t value_length = 0;
+    db_path(path, sizeof(path), "putmulti.db");
+    assert(tinykv_open(path, NULL, &db) == TINYKV_OK);
+    requests[0].key = "a"; requests[0].key_length = 1;
+    requests[0].value = "one"; requests[0].value_length = 3;
+    requests[1].key = NULL; requests[1].key_length = 2;
+    requests[1].value = "x"; requests[1].value_length = 1;
+    requests[2].key = "b"; requests[2].key_length = 1;
+    requests[2].value = NULL; requests[2].value_length = 4;
+    assert(tinykv_put_multi(db, requests, 3) == TINYKV_ERR_INVALID);
+    assert(requests[0].status == TINYKV_OK);
+    assert(requests[1].status == TINYKV_ERR_INVALID);
+    assert(requests[2].status == TINYKV_ERR_INVALID);
+    assert(tinykv_get(db, "a", 1, &value, &value_length) == TINYKV_OK);
+    assert(value_length == 3);
+    free(value);
+    assert(tinykv_count(db, &count) == TINYKV_OK && count == 1);
+    tinykv_close(db);
+}
+
 int main(void)
 {
     assert(mkdtemp(temp_dir) != NULL);
@@ -1630,6 +1691,8 @@ int main(void)
     test_iteration_across_compaction();
     test_exists_checks_presence_only();
     test_iter_seek_positions_binary();
+    test_delete_multi_mixed_results();
+    test_put_multi_mixed_results();
     test_iter_remaining_tracks_progress();
     test_get_multi_resolves_batches();
     test_auto_compact_threshold_boundary();

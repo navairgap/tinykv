@@ -104,6 +104,32 @@ typedef struct {
 tinykv_status tinykv_get_multi(tinykv_db *db, tinykv_get_result *requests,
                                size_t count);
 
+/* Batched delete under one lock acquisition. Entries report their own
+ * status (TINYKV_OK deleted, TINYKV_ERR_NOT_FOUND for absent keys); the
+ * overall status is TINYKV_OK only if every entry deleted something. */
+typedef struct {
+    const void *key;
+    size_t key_length;
+    tinykv_status status;
+} tinykv_key_result;
+
+tinykv_status tinykv_delete_multi(tinykv_db *db, tinykv_key_result *requests,
+                                  size_t count);
+
+/* Batched put under one lock acquisition. Entries report their own
+ * status; the overall status is TINYKV_OK only if every entry put
+ * succeeded. Durability follows the handle's sync policy per record. */
+typedef struct {
+    const void *key;
+    size_t key_length;
+    const void *value;
+    size_t value_length;
+    tinykv_status status;
+} tinykv_put_request;
+
+tinykv_status tinykv_put_multi(tinykv_db *db, tinykv_put_request *requests,
+                               size_t count);
+
 
 /* Rewrite the log keeping only live records, atomically replacing the
  * file. Reclaims dead and discarded bytes. */
