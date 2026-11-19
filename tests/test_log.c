@@ -334,6 +334,28 @@ static void test_scan_callback_can_abort(void)
     close(fd);
 }
 
+static void test_scan_classifies_sparse_holes(void)
+{
+    char path[128];
+    tkv_log_limits limits = {64, 1024};
+    struct captured got;
+    tkv_log_scan_result result;
+    int fd;
+    memset(&got, 0, sizeof(got));
+    snprintf(path, sizeof(path), "%s/sparse.log", temp_dir);
+    fd = tkv_open_log(path, 0, 0600, NULL);
+    assert(fd >= 0);
+    /* A pwrite far past EOF leaves a hole of zero bytes before it:
+     * neither a valid record nor an incomplete tail. */
+    assert(pwrite(fd, "sparse!", 7, (off_t)8192) == 7);
+    assert(tkv_log_scan(fd, &limits, capture, &got, &result) == 0);
+    assert(got.count == 0);
+    assert(result.tail_truncated == 0);
+    assert(result.stop_status == TINYKV_RECORD_INVALID_FORMAT);
+    assert(result.stop_offset == 0); /* the hole starts at byte zero */
+    close(fd);
+}
+
 int main(void)
 {
     assert(mkdtemp(temp_dir) != NULL);
@@ -346,6 +368,7 @@ int main(void)
     test_append_rejects_bad_input();
     test_scan_survives_every_truncation();
     test_scan_callback_can_abort();
+    test_scan_classifies_sparse_holes();
     remove_temp_dir();
     puts("tinykv log: all tests passed");
     return 0;
