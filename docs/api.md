@@ -39,6 +39,7 @@ NULL. Options (NULL = defaults):
 | `read_only` | 0 | read-only handles never lock or write |
 | `lock` | 1 | exclusive flock via `<path>.lock` |
 | `auto_compact_dead_ratio` | 0.0 | compact on close when dead bytes reach this share (0.0-1.0; 0 disables) |
+| `file_mode` | 0600 | database file permissions on creation; owner r/w required, no world-write; sidecars stay 0600 |
 
 Open replays the whole log. A torn tail is tolerated (reclaimed on the
 next write); mid-log corruption returns `TINYKV_ERR_CORRUPT` — run
@@ -105,6 +106,33 @@ still non-NULL) and the caller frees it. The overall status is
 `TINYKV_OK` only if every entry succeeded; otherwise it is the first
 failing entry's status. Entries are evaluated at execution time —
 deletes after the request list was built are visible to the batch.
+
+### `tinykv_put_multi`, `tinykv_delete_multi`
+```c
+typedef struct {
+    const void *key;
+    size_t key_length;
+    const void *value;
+    size_t value_length;
+    tinykv_status status;
+} tinykv_put_request;
+
+typedef struct {
+    const void *key;
+    size_t key_length;
+    tinykv_status status;
+} tinykv_key_result;
+
+tinykv_status tinykv_put_multi(tinykv_db *db, tinykv_put_request *requests,
+                               size_t count);
+tinykv_status tinykv_delete_multi(tinykv_db *db, tinykv_key_result *requests,
+                                  size_t count);
+```
+Whole request arrays under one lock acquisition, mirroring
+`tinykv_get_multi`: per-entry statuses, overall status of the first
+failure (including skipped invalid entries and read-only handles).
+Deletes report `TINYKV_ERR_NOT_FOUND` for absent keys without writing
+tombstones. Durability follows the handle's sync policy per record.
 
 ### `tinykv_delete`
 ```c
@@ -187,7 +215,10 @@ order. The prefix variant snapshots only keys starting with the prefix
 bytes (NULL prefix, length 0 = whole keyspace). Values are re-read at
 each step, so keys deleted after the
 snapshot are skipped and values reflect the newest writes. Pointers stay
-valid until the next step; iteration ends with `*out_key == NULL`. `tinykv_iter_remaining`
+valid until the next step; iteration ends with `*out_key == NULL`. `tinykv_iter_seek` repositions
+the iterator to the first snapshot key at or after the given bytes
+(binary search; the prefix filter still applies; seeking backwards
+restarts an earlier pass). `tinykv_iter_remaining`
 reports an upper bound on the keys still to be produced (snapshot size
 minus attempted steps; mid-iteration deletes can lower the real yield).
 
