@@ -104,6 +104,7 @@ typedef struct {
 tinykv_status tinykv_get_multi(tinykv_db *db, tinykv_get_result *requests,
                                size_t count);
 
+
 /* Rewrite the log keeping only live records, atomically replacing the
  * file. Reclaims dead and discarded bytes. */
 tinykv_status tinykv_compact(tinykv_db *db);
@@ -143,6 +144,12 @@ tinykv_status tinykv_iter_next(tinykv_iter *iter, const void **out_key,
  * overestimate, never an underestimate. */
 tinykv_status tinykv_iter_remaining(const tinykv_iter *iter,
                                     uint64_t *out_remaining);
+/* Reposition an iterator to the first snapshot key greater than or
+ * equal to the given key (binary search over the sorted snapshot).
+ * Seeking past the last key ends iteration; the prefix filter set at
+ * creation still applies. */
+tinykv_status tinykv_iter_seek(tinykv_iter *iter, const void *key,
+                               size_t key_length);
 void tinykv_iter_free(tinykv_iter *iter);
 
 /* Validate a log without opening it for writes. *out_last_good_offset

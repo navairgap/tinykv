@@ -362,8 +362,10 @@ tinykv_status tinykv_get_multi(tinykv_db *db, tinykv_get_result *requests,
         requests[i].status = TINYKV_ERR_INVALID;
         requests[i].value = NULL;
         requests[i].value_length = 0;
-        if (requests[i].key == NULL && requests[i].key_length != 0)
+        if (requests[i].key == NULL && requests[i].key_length != 0) {
+            if (overall == TINYKV_OK) overall = TINYKV_ERR_INVALID;
             continue;
+        }
         requests[i].status =
             get_locked(db, requests[i].key, requests[i].key_length,
                        &requests[i].value, &requests[i].value_length);
@@ -1054,6 +1056,33 @@ tinykv_status tinykv_iter_next(tinykv_iter *iter, const void **out_key,
     *out_value = NULL;
     *out_value_length = 0;
     tkv_mutex_unlock(&iter->db->mutex);
+    return TINYKV_OK;
+}
+
+tinykv_status tinykv_iter_seek(tinykv_iter *iter, const void *key,
+                               size_t key_length)
+{
+    size_t lo, hi;
+    if (iter == NULL || (key == NULL && key_length != 0))
+        return TINYKV_ERR_INVALID;
+    lo = 0;
+    hi = iter->count;
+    while (lo < hi) {
+        size_t mid = lo + (hi - lo) / 2;
+        const struct iter_key *candidate = &iter->keys[mid];
+        size_t common = candidate->key_length < key_length
+                            ? candidate->key_length
+                            : key_length;
+        int order = common == 0 ? 0 : memcmp(candidate->key, key, common);
+        if (order < 0 || (order == 0 && candidate->key_length < key_length))
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    iter->position = lo;
+    free(iter->value);
+    iter->value = NULL;
+    iter->value_length = 0;
     return TINYKV_OK;
 }
 

@@ -1550,6 +1550,44 @@ static void test_iter_edge_cases(void)
     tinykv_close(db);
 }
 
+static void test_iter_seek_positions_binary(void)
+{
+    char path[128];
+    tinykv_db *db = NULL;
+    tinykv_iter *iter = NULL;
+    const void *key = NULL, *value = NULL;
+    size_t klen = 0, vlen = 0;
+    db_path(path, sizeof(path), "seek.db");
+    assert(tinykv_open(path, NULL, &db) == TINYKV_OK);
+    assert(tinykv_put(db, "b", 1, "2", 1) == TINYKV_OK);
+    assert(tinykv_put(db, "d", 1, "4", 1) == TINYKV_OK);
+    assert(tinykv_put(db, "f", 1, "6", 1) == TINYKV_OK);
+    assert(tinykv_iter_new(db, &iter) == TINYKV_OK);
+    /* Seek before the first key lands on it. */
+    assert(tinykv_iter_seek(iter, "a", 1) == TINYKV_OK);
+    assert(tinykv_iter_next(iter, &key, &klen, &value, &vlen) == TINYKV_OK);
+    assert(*(const char *)key == 'b');
+    /* Seek to an exact key visits that key next. */
+    assert(tinykv_iter_seek(iter, "d", 1) == TINYKV_OK);
+    assert(tinykv_iter_next(iter, &key, &klen, &value, &vlen) == TINYKV_OK);
+    assert(*(const char *)key == 'd');
+    /* Seek between keys lands on the next greater one. */
+    assert(tinykv_iter_seek(iter, "e", 1) == TINYKV_OK);
+    assert(tinykv_iter_next(iter, &key, &klen, &value, &vlen) == TINYKV_OK);
+    assert(*(const char *)key == 'f');
+    /* Seek past the end finishes iteration. */
+    assert(tinykv_iter_seek(iter, "z", 1) == TINYKV_OK);
+    assert(tinykv_iter_next(iter, &key, &klen, &value, &vlen) == TINYKV_OK);
+    assert(key == NULL);
+    /* Seek back is allowed: snapshots allow repeated passes. */
+    assert(tinykv_iter_seek(iter, "b", 1) == TINYKV_OK);
+    assert(tinykv_iter_next(iter, &key, &klen, &value, &vlen) == TINYKV_OK);
+    assert(*(const char *)key == 'b');
+    assert(tinykv_iter_seek(iter, NULL, 1) == TINYKV_ERR_INVALID);
+    tinykv_iter_free(iter);
+    tinykv_close(db);
+}
+
 int main(void)
 {
     assert(mkdtemp(temp_dir) != NULL);
@@ -1591,6 +1629,7 @@ int main(void)
     test_buffered_sync_compact_interactions();
     test_iteration_across_compaction();
     test_exists_checks_presence_only();
+    test_iter_seek_positions_binary();
     test_iter_remaining_tracks_progress();
     test_get_multi_resolves_batches();
     test_auto_compact_threshold_boundary();
