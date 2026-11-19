@@ -29,7 +29,9 @@ test "$("$TOOL" count "$db" 'nope:')" = 0
 "$TOOL" del "$db" prefix:one
 "$TOOL" del "$db" prefix:two
 "$TOOL" verify "$db"
-"$TOOL" verify "$db" --json | grep -q '"status": "ok"'
+"$TOOL" verify "$db" --json > "$work/verify.json"
+grep -q '"status": "ok"' "$work/verify.json"
+grep -q '"discarded_bytes": 0' "$work/verify.json"
 "$TOOL" compact "$db"
 "$TOOL" verify "$db"
 "$TOOL" stats "$db" --json > "$work/stats.json"

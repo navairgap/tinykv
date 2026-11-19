@@ -647,27 +647,40 @@ static int cmd_verify(int argc, char **argv)
     if (strcmp(argv[argc - 1], "--json") == 0) as_json = 1;
     if (argc >= 3 && strcmp(argv[2], "--json") == 0) as_json = 1;
     status = tinykv_verify(database, max_key, max_value, &last_good);
-    if (as_json) {
-        printf("{\n"
-               "  \"status\": \"%s\",\n"
-               "  \"last_good_offset\": %llu\n"
-               "}\n",
-               tinykv_status_string(status),
-               (unsigned long long)last_good);
+    {
+        /* Torn tails leave reclaimable bytes; report the gap so
+         * operators can size the repair. */
+        struct stat st;
+        uint64_t discarded = 0;
+        if (status == TINYKV_ERR_TORN_TAIL && stat(database, &st) == 0 &&
+            (uint64_t)st.st_size > last_good)
+            discarded = (uint64_t)st.st_size - last_good;
+        if (as_json) {
+            printf("{\n"
+                   "  \"status\": \"%s\",\n"
+                   "  \"last_good_offset\": %llu,\n"
+                   "  \"discarded_bytes\": %llu\n"
+                   "}\n",
+                   tinykv_status_string(status),
+                   (unsigned long long)last_good,
+                   (unsigned long long)discarded);
+            return exit_code_for(status);
+        }
+        if (status == TINYKV_OK)
+            printf("ok: log replays cleanly (%llu bytes)\n",
+                   (unsigned long long)last_good);
+        else if (status == TINYKV_ERR_TORN_TAIL)
+            printf("torn tail: last verified offset %llu, %llu bytes "
+                   "reclaimable (repair available)\n",
+                   (unsigned long long)last_good,
+                   (unsigned long long)discarded);
+        else if (status == TINYKV_ERR_CORRUPT)
+            printf("corruption: last verified offset %llu\n",
+                   (unsigned long long)last_good);
+        else
+            report(argv[1], status);
         return exit_code_for(status);
     }
-    if (status == TINYKV_OK)
-        printf("ok: log replays cleanly (%llu bytes)\n",
-               (unsigned long long)last_good);
-    else if (status == TINYKV_ERR_TORN_TAIL)
-        printf("torn tail: last verified offset %llu (repair available)\n",
-               (unsigned long long)last_good);
-    else if (status == TINYKV_ERR_CORRUPT)
-        printf("corruption: last verified offset %llu\n",
-               (unsigned long long)last_good);
-    else
-        report(argv[1], status);
-    return exit_code_for(status);
 }
 
 static int cmd_repair(int argc, char **argv)
